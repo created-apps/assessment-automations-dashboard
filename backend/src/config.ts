@@ -1,0 +1,212 @@
+import path from 'node:path';
+
+// Load .env here rather than relying on a CLI flag, so the app picks up its
+// config however it's started. Real environment variables win.
+try {
+  process.loadEnvFile(path.join(__dirname, '..', '.env'));
+} catch {
+  // No .env file -- fall back to the ambient environment.
+}
+
+function required(name: string): string {
+  const value = process.env[name];
+  if (!value) {
+    console.error(`Missing ${name} -- set it in .env`);
+    process.exit(1);
+  }
+  return value;
+}
+
+function num(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) {
+    console.error(`${name} must be a number, got "${raw}"`);
+    process.exit(1);
+  }
+  return parsed;
+}
+
+function optional(name: string): string {
+  return (process.env[name] ?? '').trim();
+}
+
+/**
+ * The Google service account, from the base64 of its JSON key
+ * (GOOGLE_CREDENTIALS_BASE64 -- the same variable the Automations service
+ * uses). Returns null when unset or unparseable, so the Sheets writes just
+ * skip rather than crashing the whole service.
+ */
+function googleFromBase64(): { clientEmail: string; privateKey: string } | null {
+  const encoded = optional('GOOGLE_CREDENTIALS_BASE64');
+  if (!encoded) return null;
+  try {
+    const json = JSON.parse(Buffer.from(encoded, 'base64').toString('utf8'));
+    if (!json.client_email || !json.private_key) return null;
+    return {
+      clientEmail: String(json.client_email),
+      privateKey: String(json.private_key).replace(/\\n/g, '\n'),
+    };
+  } catch {
+    console.error('GOOGLE_CREDENTIALS_BASE64 is not valid base64 service-account JSON');
+    return null;
+  }
+}
+
+/**
+ * The people a session can be booked with, and where their calendar lives.
+ *
+ * Keyed by the name Slack is expected to type; the value is the booking URL.
+ * Matching is fuzzy, so "urja javeri" still finds "Urja Jhaveri" -- the keys
+ * here are the canonical spelling used in the WhatsApp message.
+ */
+function bookingHosts(): { name: string; url: string }[] {
+  const hosts = [
+    { name: 'Aashna Saraf', env: 'CALENDLY_AASHNA_SARAF' },
+    { name: 'Urja Jhaveri', env: 'CALENDLY_URJA_JHAVERI' },
+    { name: 'Dhruv Singh', env: 'CALENDLY_DHRUV_SINGH' },
+  ];
+
+  const configured = hosts
+    .map((h) => ({ name: h.name, url: (process.env[h.env] ?? '').trim() }))
+    .filter((h) => h.url.length > 0);
+
+  if (configured.length === 0) {
+    console.error(
+      'No booking links set -- set at least one of ' +
+        hosts.map((h) => h.env).join(', ')
+    );
+    process.exit(1);
+  }
+  return configured;
+}
+
+const syncUrl = optional('SYNC_SUPABASE_URL').replace(/\/+$/, '');
+const syncKey = optional('SYNC_SUPABASE_SERVICE_KEY');
+
+export const config = {
+  port: num('PORT', 3000),
+
+  supabase: {
+    // The group-creation service's project. This service's two tables live
+    // there too (sql/001_init.sql) and are reached over PostgREST.
+    url: required('SUPABASE_URL').replace(/\/+$/, ''),
+    // Service-role key: these reads and writes bypass row-level security.
+    serviceKey: required('SUPABASE_SERVICE_KEY'),
+  },
+
+  periskope: {
+    apiKey: required('PERISKOPE_API_KEY'),
+    phone: required('PERISKOPE_PHONE'),
+    baseUrl: process.env.PERISKOPE_BASE_URL ?? 'https://api.periskope.app/v1',
+  },
+
+  /**
+   * Slack is outbound only: nudges are posted, nothing is read. The bot needs
+   * chat:write and nothing else -- channels:history is no longer required.
+   */
+  slack: {
+    botToken: required('SLACK_BOT_TOKEN'),
+    // Where each group's thread is opened, and its nudges posted.
+    channel: required('SLACK_CHANNEL_ID'),
+    baseUrl: process.env.SLACK_BASE_URL ?? 'https://slack.com/api',
+  },
+
+  dashboard: {
+    /**
+     * Bearer token the dashboard's server sends on /api/*. The dashboard is
+     * the only client, and it calls from its own server -- this never reaches
+     * a browser, and neither does anything it protects.
+     */
+    secret: required('DASHBOARD_API_SECRET'),
+    /**
+     * Where the team goes to act on a group. Linked from every Slack nudge,
+     * since the nudge is now a notification rather than something to reply to.
+     */
+    url: (process.env.DASHBOARD_URL ?? '').trim().replace(/\/+$/, ''),
+  },
+
+  intake: {
+    // Shared with the group-creation service; sent as a bearer token on
+    // POST /group-created so the endpoint isn't open to the internet.
+    secret: required('INTAKE_SHARED_SECRET'),
+  },
+
+  assessments: {
+    computerScience:
+      process.env.CS_ASSESSMENT_URL ??
+      'https://docs.google.com/forms/d/e/1FAIpQLSex5LuvsmlAf6GG6f7RoFsOGMQ_4vgjyXEji1rMM_eG_MQ9Lw/viewform?usp=sf_link',
+    prototyping:
+      process.env.PROTOTYPING_ASSESSMENT_URL ??
+      'https://docs.google.com/forms/d/e/1FAIpQLSdrh1pzdFH8XG5QMZcXpo3EX6a5wl4wN9rgb_oj__XsU8AMPg/viewform?usp=sf_link',
+  },
+
+  booking: {
+    hosts: bookingHosts(),
+  },
+
+  curriculum: {
+    // Subject labels the dashboard's Project Setup action offers. These must
+    // match the keys in the project-setup service's CURRICULUM_TEMPLATES_JSON,
+    // since that service maps the chosen label to a Drive template folder.
+    // Comma separated; blank means none are configured yet.
+    subjects: (process.env.CURRICULUM_SUBJECTS ?? '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean),
+  },
+
+  nudge: {
+    // Daily at 09:30. The ask is "every 24 hours"; a fixed hour keeps it
+    // landing in working time rather than drifting to whenever we deployed.
+    cron: process.env.NUDGE_CRON ?? '30 9 * * *',
+    // Don't re-ask a thread that was nudged less than this long ago, whatever
+    // the cron does -- a redeploy must not produce a second nudge that day.
+    minIntervalHours: num('NUDGE_MIN_INTERVAL_HOURS', 20),
+    /**
+     * 0 -- the default -- means never stop asking. A group keeps being chased
+     * until a mentor is actually introduced, because a case that quietly
+     * stopped being nudged is a student nobody is coming back to.
+     *
+     * Set a positive number of days to restore a cutoff, after which the case
+     * is marked ABANDONED and left alone.
+     */
+    giveUpAfterDays: num('NUDGE_GIVE_UP_AFTER_DAYS', 0),
+  },
+
+  mentors: {
+    // Below this score a name is reported back to Slack as unmatched rather
+    // than being guessed at -- sending the wrong mentor's intro to a parent is
+    // much worse than asking whoever replied to spell the name again.
+    minMatchScore: num('MENTOR_MIN_MATCH_SCORE', 0.72),
+    // Two candidates within this of each other are treated as ambiguous.
+    ambiguityMargin: num('MENTOR_AMBIGUITY_MARGIN', 0.05),
+  },
+
+  /**
+   * SYNC's Supabase project. Used at mentor-introduction time to look up the
+   * mentor's phone/email and to link them into user_group_memberships.
+   * Optional: unset and those side-effects are skipped (with a warning).
+   */
+  sync: {
+    url: syncUrl,
+    serviceKey: syncKey,
+    configured: Boolean(syncUrl && syncKey),
+  },
+
+  /** Google service account (shared with the Automations service). */
+  google: {
+    creds: googleFromBase64(),
+  },
+
+  /**
+   * The intake Google Sheet. Mentor details and the project title/description
+   * are written back to the student's row here. Optional -- unset and the
+   * writes are skipped.
+   */
+  sheet: {
+    id: optional('GOOGLE_SHEET_ID'),
+    tab: optional('GOOGLE_SHEET_TAB') || 'Sheet1',
+  },
+} as const;

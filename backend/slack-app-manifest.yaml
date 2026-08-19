@@ -1,0 +1,44 @@
+# Slack app manifest for assessment-automations.
+#
+# Create the app at https://api.slack.com/apps/new -> "From a manifest",
+# then paste this in. Replace <your-host> first.
+#
+# Slack verifies request_url the moment you save, so the service has to be
+# deployed and reachable before you paste this. If it isn't yet, delete the
+# whole `event_subscriptions` block, create the app, deploy, and add the
+# Request URL afterwards under Event Subscriptions.
+#
+# For a PRIVATE channel, swap the two marked lines:
+#   channels:history  -> groups:history
+#   message.channels  -> message.groups
+
+display_information:
+  name: Assessment Automations
+  description: Asks what to do with each new student group and sends the result to WhatsApp
+  background_color: "#2c3e50"
+
+features:
+  bot_user:
+    display_name: Assessment Automations
+    # The nudge cron runs on a schedule rather than on demand, so there is no
+    # sense in which this bot is ever "away".
+    always_online: true
+
+oauth_config:
+  scopes:
+    bot:
+      # Posts the opening thread, the confirmation after each reply, and the
+      # daily mentor nudges.
+      - chat:write
+      # What makes Slack deliver the reply text in message.channels events.
+      - channels:history # private channel: groups:history
+
+settings:
+  event_subscriptions:
+    request_url: https://<your-host>/slack/events
+    bot_events:
+      - message.channels # private channel: message.groups
+  # This service receives events over HTTP, not a websocket.
+  socket_mode_enabled: false
+  org_deploy_enabled: false
+  token_rotation_enabled: false
