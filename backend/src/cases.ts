@@ -8,7 +8,7 @@ import { parseDeadline } from './dates';
 import { findMentor, introFor, type Mentor } from './mentors';
 import { findHost, hosts } from './booking';
 import * as sync from './sync';
-import * as sheets from './sheets';
+// import * as sheets from './sheets'; // re-enable with the sheet write-back below
 
 /**
  * The case lifecycle: a group arrives, Slack is asked what to do with it, and
@@ -533,23 +533,27 @@ async function afterMentorIntroduced(
     }
   }
 
-  // 3. Write mentor details into the intake sheet row.
-  if (sheets.sheetsConfigured()) {
-    if (!groupCase.sheetRow) {
-      warnings.push('Case has no sheet_row -- mentor details not written to the sheet.');
-    } else {
-      const cells: Record<string, string> = { 'Mentor Name': resolved?.name ?? mentorName };
-      if (resolved?.email) cells['Mentor Email'] = resolved.email;
-      if (resolved?.phone) cells['Mentor Phone Number'] = resolved.phone;
-      try {
-        const { skippedHeaders } = await sheets.writeRowCells(groupCase.sheetRow, cells);
-        if (skippedHeaders.length)
-          warnings.push(`Sheet is missing column(s): ${skippedHeaders.join(', ')}.`);
-      } catch (err) {
-        warnings.push(`Writing mentor details to the sheet failed: ${message(err)}`);
-      }
-    }
-  }
+  // 3. DISABLED: writing the mentor's name/email/phone into the intake sheet
+  //    row. Nothing reads those columns back -- the mentor is resolved from
+  //    SYNC by id -- so turning this off only means the sheet stops being kept
+  //    current for whoever reads it by eye.
+  //
+  // if (sheets.sheetsConfigured()) {
+  //   if (!groupCase.sheetRow) {
+  //     warnings.push('Case has no sheet_row -- mentor details not written to the sheet.');
+  //   } else {
+  //     const cells: Record<string, string> = { 'Mentor Name': resolved?.name ?? mentorName };
+  //     if (resolved?.email) cells['Mentor Email'] = resolved.email;
+  //     if (resolved?.phone) cells['Mentor Phone Number'] = resolved.phone;
+  //     try {
+  //       const { skippedHeaders } = await sheets.writeRowCells(groupCase.sheetRow, cells);
+  //       if (skippedHeaders.length)
+  //         warnings.push(`Sheet is missing column(s): ${skippedHeaders.join(', ')}.`);
+  //     } catch (err) {
+  //       warnings.push(`Writing mentor details to the sheet failed: ${message(err)}`);
+  //     }
+  //   }
+  // }
 
   if (warnings.length) {
     console.warn(`[case ${groupCase.id}] mentor side-effects:`, warnings);

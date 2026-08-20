@@ -11,7 +11,7 @@ import {
   type ActionInput,
 } from './cases';
 import { PeriskopeError } from './periskope';
-import * as sheets from './sheets';
+// import * as sheets from './sheets'; // re-enable with the sheet write-back below
 import { ensureMentorOnSync } from './mentor-sync';
 
 /**
@@ -337,27 +337,35 @@ api.post('/cases/:id/project-setup', async (req, res) => {
       submittedBy: parsed.data.actor ?? null,
     });
 
-    // Mirror the project title/description into the intake sheet row.
-    // Best-effort: the details are already saved, so a sheet hiccup must not
-    // fail the request.
-    if (sheets.sheetsConfigured() && groupCase.sheetRow) {
-      try {
-        await sheets.writeRowCells(groupCase.sheetRow, {
-          'Project Name': parsed.data.project_title,
-          'Project Description': description,
-        });
-        // Only now that the sheet actually holds these values: this is what
-        // tells the sync cron the row matches the database, so its next pass
-        // sees no edit and leaves the details alone. Skipping it on failure is
-        // deliberate -- see markSheetDetailsSeen.
-        await db.markSheetDetailsSeen(req.params.id, {
-          title: parsed.data.project_title,
-          description,
-        });
-      } catch (err) {
-        console.error(`[case ${req.params.id}] writing project details to the sheet failed:`, err);
-      }
-    }
+    // DISABLED: mirroring the project title/description back into the intake
+    // sheet row. The dashboard no longer writes to the sheet, so the two can
+    // drift for a case edited here -- the database is the current value and
+    // the sheet keeps whatever it last held.
+    //
+    // Safe to leave the sheet-sync cron running alongside this: it only acts
+    // when the sheet differs from `sheet_details_seen`, and this block is also
+    // the only thing that moved `seen`. With both commented out, seen still
+    // matches the sheet, so the next pass sees no edit and does not read the
+    // sheet's older text back over these details.
+    //
+    // Re-enable by uncommenting -- the markSheetDetailsSeen call must stay
+    // inside the try, after the write, or a failed write would record values
+    // the sheet never received.
+    //
+    // if (sheets.sheetsConfigured() && groupCase.sheetRow) {
+    //   try {
+    //     await sheets.writeRowCells(groupCase.sheetRow, {
+    //       'Project Name': parsed.data.project_title,
+    //       'Project Description': description,
+    //     });
+    //     await db.markSheetDetailsSeen(req.params.id, {
+    //       title: parsed.data.project_title,
+    //       description,
+    //     });
+    //   } catch (err) {
+    //     console.error(`[case ${req.params.id}] writing project details to the sheet failed:`, err);
+    //   }
+    // }
 
     return res.json(toApiProjectSetup(setup));
   } catch (err) {
