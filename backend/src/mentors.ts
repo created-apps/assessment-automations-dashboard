@@ -18,6 +18,12 @@ export interface Mentor {
   variants?: Record<string, string>;
   email?: string | null;
   phone?: string | null;
+  /**
+   * Their SYNC users.id. Only dashboard-added mentors have one -- the JSON
+   * seed predates it -- so every consumer still falls back to matching on
+   * name when it is absent.
+   */
+  syncUserId?: string | null;
 }
 
 const seedMentors: Mentor[] = directory as Mentor[];
@@ -34,6 +40,7 @@ function fromDb(m: DbMentor): Mentor {
     ...(m.variants ? { variants: m.variants } : {}),
     email: m.email,
     phone: m.phone,
+    syncUserId: m.syncUserId,
   };
 }
 

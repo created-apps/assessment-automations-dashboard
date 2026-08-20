@@ -1,4 +1,10 @@
-export type Stage = "NEW" | "IN_PROGRESS" | "MENTOR_ASSIGNED" | "ABANDONED"
+export type Stage =
+  /** Group made, family not in it yet. Visible so its project can be filled in. */
+  | "AWAITING_JOIN"
+  | "NEW"
+  | "IN_PROGRESS"
+  | "MENTOR_ASSIGNED"
+  | "ABANDONED"
 
 export interface GroupCase {
   id: string
@@ -66,8 +72,12 @@ export interface ProjectSetup {
   submitted_by: string | null
   status: SetupStatus
   step_whatsapp: SetupStepStatus
+  /** The Drive link appended to the group description, once there is a folder. */
+  step_whatsapp_drive_link: SetupStepStatus
   step_sync: SetupStepStatus
   step_drive: SetupStepStatus
+  /** The mentor's editor access to the student's Drive folder. */
+  step_mentor_access: SetupStepStatus
   step_curriculum: SetupStepStatus
   step_cosmic_student: SetupStepStatus
   step_cosmic_project: SetupStepStatus

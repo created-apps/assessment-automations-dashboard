@@ -34,8 +34,10 @@ const NO_CURRICULUM = "NONE"
 
 const STEP_LABELS: Record<string, string> = {
   step_whatsapp: "WhatsApp",
-  step_sync: "SYNC",
   step_drive: "Drive",
+  step_sync: "SYNC",
+  step_mentor_access: "Mentor Drive access",
+  step_whatsapp_drive_link: "WhatsApp Drive link",
   step_curriculum: "Curriculum",
   step_cosmic_student: "COSMIC student",
   step_cosmic_project: "COSMIC project",
@@ -94,7 +96,7 @@ export function ProjectSetupDialog({
       toast.success("Project setup saved", {
         description: mentorAssigned
           ? "The setup will run automatically within a few minutes."
-          : "It will run automatically once a mentor is assigned.",
+          : "The WhatsApp group will be updated within a few minutes. Drive, SYNC and COSMIC follow once a mentor is introduced.",
       })
       await mutateSetup()
       onOpenChange(false)
@@ -125,8 +127,9 @@ export function ProjectSetupDialog({
 
         {!mentorAssigned ? (
           <div className="rounded-lg border border-dashed p-3 text-sm text-muted-foreground">
-            No mentor is assigned yet. You can save the details now — the setup
-            runs automatically once a mentor has been introduced.
+            No mentor is assigned yet. Saving now still renames the WhatsApp
+            group and sets its description. The Drive folder, SYNC link and
+            COSMIC project follow once a mentor has been introduced.
           </div>
         ) : null}
 
@@ -190,12 +193,14 @@ export function ProjectSetupDialog({
             <div className="flex flex-wrap gap-1.5">
               {([
                 "step_whatsapp",
-                "step_sync",
                 "step_drive",
-                "step_curriculum",
+                "step_sync",
+                "step_mentor_access",
+                "step_whatsapp_drive_link",
                 "step_cosmic_student",
                 "step_cosmic_project",
                 "step_cosmic_sync_group",
+                "step_curriculum",
               ] as const).map(
                 (key) => (
                   <Badge key={key} variant={stepVariant(setup[key])} className="font-normal">

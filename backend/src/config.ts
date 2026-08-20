@@ -193,6 +193,11 @@ export const config = {
     url: syncUrl,
     serviceKey: syncKey,
     configured: Boolean(syncUrl && syncKey),
+    // How a mentor's number is written into users.phone_number. Lookups always
+    // try both shapes; this only decides the format of rows we insert, and it
+    // matches USER_PHONE_FORMAT in the group-creation service, which writes
+    // students and parents into the same table.
+    phoneFormat: (process.env.USER_PHONE_FORMAT ?? 'digits') as 'digits' | 'plus',
   },
 
   /** Google service account (shared with the Automations service). */
@@ -208,5 +213,16 @@ export const config = {
   sheet: {
     id: optional('GOOGLE_SHEET_ID'),
     tab: optional('GOOGLE_SHEET_TAB') || 'Sheet1',
+  },
+
+  jobs: {
+    /**
+     * Reading the project title/description back out of the intake sheet. One
+     * Sheets request per tick covers every case, so this can run often; the
+     * bound worth respecting is the Sheets read quota, not our own cost.
+     */
+    sheetSyncCron: optional('SHEET_SYNC_CRON') || '*/5 * * * *',
+    /** Retrying the SYNC accounts of mentors added while SYNC was down. */
+    mentorSyncCron: optional('MENTOR_SYNC_CRON') || '*/15 * * * *',
   },
 } as const;

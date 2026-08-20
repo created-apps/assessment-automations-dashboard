@@ -15,7 +15,7 @@ export function syncConfigured(): boolean {
 }
 
 async function call<T>(
-  method: 'GET' | 'POST',
+  method: 'GET' | 'POST' | 'PATCH',
   pathname: string,
   init: { body?: unknown; prefer?: string } = {}
 ): Promise<T> {
@@ -105,4 +105,125 @@ export async function ensureMentorMembership(
     prefer: 'return=minimal',
   });
   return 'inserted';
+}
+
+// ---------------------------------------------------------------------------
+// Mentor accounts.
+//
+// A mentor added in the dashboard needs a SYNC `users` row before anything can
+// be linked to them. SYNC's users are keyed on phone_number (the group-creation
+// service inserts students and parents with on_conflict=phone_number), and it
+// is NOT NULL -- which is why the dashboard now requires a mentor's phone.
+//
+// Numbers predate a settled format, so a lookup tries both shapes even though
+// rows written here use one. Same rule as the group-creation service.
+
+/** The two shapes a number might already be stored in. */
+function phoneVariants(digits: string): string[] {
+  return [digits, `+${digits}`];
+}
+
+/** Strip a number to digits, the form both shapes are built from. */
+export function phoneDigits(raw: string): string {
+  return (raw ?? '').replace(/\D/g, '');
+}
+
+function formatPhone(digits: string): string {
+  return config.sync.phoneFormat === 'plus' ? `+${digits}` : digits;
+}
+
+export interface SyncUser {
+  id: string;
+  name: string;
+  phone_number: string;
+  email: string | null;
+  role: string;
+}
+
+const USER_COLUMNS = 'id,name,phone_number,email,role';
+
+/** The SYNC user holding this number, whichever shape it is stored in. */
+export async function findUserByPhone(digits: string): Promise<SyncUser | null> {
+  if (!digits) return null;
+  const params = new URLSearchParams({
+    select: USER_COLUMNS,
+    or: `(${phoneVariants(digits).map((v) => `phone_number.eq.${v}`).join(',')})`,
+    limit: '1',
+  });
+  const rows = await call<SyncUser[]>('GET', `/users?${params}`);
+  return rows[0] ?? null;
+}
+
+/** One SYNC user by id, or null if they have since been removed. */
+export async function findUserById(id: string): Promise<SyncUser | null> {
+  const rows = await call<SyncUser[]>(
+    'GET',
+    `/users?select=${USER_COLUMNS}&id=eq.${encodeURIComponent(id)}&limit=1`
+  );
+  return rows[0] ?? null;
+}
+
+export interface EnsureMentorInput {
+  name: string;
+  /** Required: SYNC's users.phone_number is NOT NULL and is the natural key. */
+  phone: string;
+  email?: string | null;
+}
+
+export type EnsureMentorResult =
+  | { outcome: 'created'; user: SyncUser }
+  | { outcome: 'existing'; user: SyncUser }
+  /** The number was on file under another role, and has been made a mentor. */
+  | { outcome: 'promoted'; user: SyncUser; previousRole: string };
+
+/**
+ * Make sure the mentor exists on SYNC as a `users` row with role 'mentor', and
+ * return it. Idempotent on the phone number, so adding the same mentor twice
+ * adopts the existing account rather than creating a second one.
+ *
+ * A number already on file under a different role is promoted to mentor (the
+ * team's call: the same person is often already in SYNC as a staff contact).
+ * Their name and email are left alone -- SYNC's copy is the one its own
+ * onboarding maintains.
+ */
+export async function ensureMentorUser(
+  input: EnsureMentorInput
+): Promise<EnsureMentorResult> {
+  const digits = phoneDigits(input.phone);
+  if (!digits) {
+    throw new Error(`"${input.phone}" has no digits -- SYNC needs a phone number`);
+  }
+
+  const existing = await findUserByPhone(digits);
+  if (existing) {
+    if (existing.role === 'mentor') return { outcome: 'existing', user: existing };
+
+    const previousRole = existing.role;
+    const updated = await call<SyncUser[]>(
+      'PATCH',
+      `/users?id=eq.${encodeURIComponent(existing.id)}`,
+      { body: { role: 'mentor' }, prefer: 'return=representation' }
+    );
+    return {
+      outcome: 'promoted',
+      user: updated[0] ?? { ...existing, role: 'mentor' },
+      previousRole,
+    };
+  }
+
+  const created = await call<SyncUser[]>('POST', '/users', {
+    body: {
+      name: input.name,
+      phone_number: formatPhone(digits),
+      email: input.email || null,
+      role: 'mentor',
+      // Mentors belong to many groups, so membership is the only link they
+      // carry -- users.group_id stays null rather than naming one of them.
+      group_id: null,
+    },
+    prefer: 'return=representation',
+  });
+  const user = created[0];
+  if (!user) throw new Error('SYNC users insert returned no row');
+  return { outcome: 'created', user };
 }

@@ -23,7 +23,9 @@ const bodySchema = z.object({
   name: z.string().trim().min(1).max(200),
   intro: z.string().trim().min(1).max(8000),
   email: z.string().trim().email().max(320).optional(),
-  phone: z.string().trim().min(3).max(40).optional(),
+  // Required: the mentor's SYNC account is keyed on this number, and it is
+  // also where their group invite is sent.
+  phone: z.string().trim().min(3).max(40),
 })
 
 /**

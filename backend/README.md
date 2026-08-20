@@ -19,7 +19,13 @@ Automations                 assessment-automations              Dashboard / What
 -----------                 ----------------------              --------------------
 sheet row -> WhatsApp group
   |
-  '-- POST /group-created -> stores a GroupCase ------------->  Slack: "new group" notice
+  |-- POST /group-registered -> stores a GroupCase at
+  |     (group exists, no one         AWAITING_JOIN, no Slack thread yet:
+  |      has joined yet)              the project is already on the dashboard
+  |
+  '-- POST /group-created -> opens the thread on that case -->  Slack: "new group" notice
+        (family joined,         (or creates it, for a group made
+         welcome sent)           outside intake)
                                     |
                             GET /api/cases/summaries  <-------  the team opens the dashboard
                             POST /api/cases/:id/actions <-----  they confirm an action
@@ -72,6 +78,42 @@ no signing secret, and the bot needs only `chat:write`.
 Each entry is `{ name, intro }`, plus `variants` for the two mentors with more
 than one written introduction. The introduction is sent to the group exactly as
 written. To add or correct one, edit the JSON; nothing else needs to change.
+
+Mentors added from the dashboard live in the `mentors` table instead and are
+merged on top of that seed. Adding one does two things (`src/mentor-sync.ts`):
+
+1. writes the row here, and
+2. gives them a **SYNC `users` row with role `mentor`**, storing its id as
+   `mentors.sync_user_id`.
+
+Phone is therefore **required**: SYNC's `users.phone_number` is NOT NULL and is
+what an account is keyed on, and it is also where the group invite is DM'd. A
+number already on SYNC under another role is promoted to mentor rather than
+duplicated. If SYNC is unreachable the mentor is still saved, the error is kept
+on the row, and the `mentor sync backfill` cron retries it — SYNC being down is
+not a reason the team can't add a mentor.
+
+When a mentor is introduced, that SYNC id is stamped onto the case
+(`group_cases.mentor_sync_user_id`), so every downstream step resolves the
+mentor by id instead of matching their name against SYNC's spelling of it.
+
+## The intake sheet as a second editor
+
+The project title and description can be edited in the dashboard **or** typed
+straight into the intake sheet. The dashboard direction mirrors into the row on
+submit; `src/sheet-sync.ts` is the cron that reads the other way.
+
+Two writers to one field needs a rule, and "whichever is newer" isn't one —
+there is no shared clock, and the dashboard's own mirror-write lands in the
+sheet looking like a fresh edit. So `project_setups.sheet_details_seen` holds
+what the sheet last said, and "the sheet was edited" means `sheet != seen`.
+Both writers keep it current, so the mirror-write can't bounce back. It is only
+ever written **after** a sheet write actually lands: skipping it on failure is
+what stops stale text being read back over new details.
+
+A row with both a Project Name and a Project Description sets `submitted_at`,
+which is what makes the case eligible for the project-setup service. The
+curriculum subject has no sheet column and stays dashboard-only.
 
 ## Setup
 
@@ -159,12 +201,14 @@ every open thread each day.
 | Method | Path | Auth |
 | --- | --- | --- |
 | `GET` | `/health` | none — reports 503 when storage is unreachable |
-| `POST` | `/group-created` | `Authorization: Bearer $INTAKE_SHARED_SECRET` |
+| `POST` | `/group-registered` | `Authorization: Bearer $INTAKE_SHARED_SECRET` — pre-join, no Slack thread |
+| `POST` | `/group-created` | ditto — the handover; opens the Slack thread |
 | `GET` | `/api/cases` | `Authorization: Bearer $DASHBOARD_API_SECRET` |
 | `GET` | `/api/cases/summaries` | ditto — list view, with each group's last action |
 | `GET` | `/api/cases/:id` | ditto |
 | `GET` | `/api/cases/:id/actions` | ditto — the timeline |
 | `GET` | `/api/mentors` | ditto — the directory |
+| `POST` | `/api/mentors` | ditto — adds a mentor, here and on SYNC |
 | `GET` | `/api/hosts` | ditto — booking names only, URLs stay server-side |
 | `POST` | `/api/cases/:id/actions` | ditto — carries out one action |
 

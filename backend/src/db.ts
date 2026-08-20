@@ -57,7 +57,17 @@ async function call<T>(
   return data as T;
 }
 
-export type CaseStage = 'NEW' | 'IN_PROGRESS' | 'MENTOR_ASSIGNED' | 'ABANDONED';
+/**
+ * AWAITING_JOIN is where a case starts now: the WhatsApp group exists and the
+ * dashboard shows the project, but the family hasn't joined, so there is no
+ * Slack thread yet. Handover moves it to NEW.
+ */
+export type CaseStage =
+  | 'AWAITING_JOIN'
+  | 'NEW'
+  | 'IN_PROGRESS'
+  | 'MENTOR_ASSIGNED'
+  | 'ABANDONED';
 
 export type ActionKind =
   | 'ADD_MENTOR'
@@ -88,8 +98,11 @@ export interface GroupCase {
   mentorName: string | null;
   mentorRequestedName: string | null;
   mentorIntroSentAt: Date | null;
-  slackChannel: string;
-  slackThreadTs: string;
+  /** The mentor's SYNC users.id, stamped at introduction. */
+  mentorSyncUserId: string | null;
+  /** Null until handover opens the thread (see AWAITING_JOIN). */
+  slackChannel: string | null;
+  slackThreadTs: string | null;
   lastNudgedAt: Date | null;
   nudgeCount: number;
   createdAt: Date;
@@ -133,8 +146,9 @@ interface GroupCaseRow {
   mentor_name: string | null;
   mentor_requested_name: string | null;
   mentor_intro_sent_at: string | null;
-  slack_channel: string;
-  slack_thread_ts: string;
+  mentor_sync_user_id: string | null;
+  slack_channel: string | null;
+  slack_thread_ts: string | null;
   last_nudged_at: string | null;
   nudge_count: number;
   created_at: string;
@@ -181,6 +195,7 @@ function toCase(row: GroupCaseRow): GroupCase {
     mentorName: row.mentor_name,
     mentorRequestedName: row.mentor_requested_name,
     mentorIntroSentAt: date(row.mentor_intro_sent_at),
+    mentorSyncUserId: row.mentor_sync_user_id,
     slackChannel: row.slack_channel,
     slackThreadTs: row.slack_thread_ts,
     lastNudgedAt: date(row.last_nudged_at),
@@ -308,8 +323,10 @@ export interface NewCase {
   supabaseGroupId?: string | null;
   inviteLink?: string | null;
   payload: unknown;
-  slackChannel: string;
-  slackThreadTs: string;
+  stage?: CaseStage;
+  /** Both null for a pre-join case; handover fills them in. */
+  slackChannel?: string | null;
+  slackThreadTs?: string | null;
 }
 
 export async function insertCase(input: NewCase): Promise<GroupCase> {
@@ -330,8 +347,9 @@ export async function insertCase(input: NewCase): Promise<GroupCase> {
       supabase_group_id: input.supabaseGroupId ?? null,
       invite_link: input.inviteLink ?? null,
       payload: input.payload ?? {},
-      slack_channel: input.slackChannel,
-      slack_thread_ts: input.slackThreadTs,
+      ...(input.stage ? { stage: input.stage } : {}),
+      slack_channel: input.slackChannel ?? null,
+      slack_thread_ts: input.slackThreadTs ?? null,
     },
     prefer: 'return=representation',
   });
@@ -357,6 +375,10 @@ export interface CasePatch {
   mentorName?: string | null;
   mentorRequestedName?: string | null;
   mentorIntroSentAt?: Date | null;
+  mentorSyncUserId?: string | null;
+  /** Written once, when handover opens the thread for a pre-join case. */
+  slackChannel?: string | null;
+  slackThreadTs?: string | null;
   lastNudgedAt?: Date | null;
   nudgeCount?: number;
 }
@@ -392,6 +414,9 @@ export async function updateCase(
   set('mentor_name', patch.mentorName);
   set('mentor_requested_name', patch.mentorRequestedName);
   set('mentor_intro_sent_at', patch.mentorIntroSentAt);
+  set('mentor_sync_user_id', patch.mentorSyncUserId);
+  set('slack_channel', patch.slackChannel);
+  set('slack_thread_ts', patch.slackThreadTs);
   set('last_nudged_at', patch.lastNudgedAt);
   set('nudge_count', patch.nudgeCount);
 
@@ -499,8 +524,10 @@ export interface ProjectSetup {
   submittedBy: string | null;
   status: string;
   stepWhatsapp: string;
+  stepWhatsappDriveLink: string;
   stepSync: string;
   stepDrive: string;
+  stepMentorAccess: string;
   stepCurriculum: string;
   stepCosmicStudent: string;
   stepCosmicProject: string;
@@ -509,6 +536,16 @@ export interface ProjectSetup {
   cosmicStudentId: string | null;
   cosmicProjectId: string | null;
   lastError: string | null;
+  /** What the intake sheet last held, so an edit there can be spotted. */
+  sheetDetailsSeen: SheetDetails | null;
+  detailsRevision: number;
+  appliedRevision: number;
+}
+
+/** The pair of fields either writer can change. */
+export interface SheetDetails {
+  title: string;
+  description: string;
 }
 
 interface ProjectSetupRow {
@@ -520,8 +557,10 @@ interface ProjectSetupRow {
   submitted_by: string | null;
   status: string;
   step_whatsapp: string;
+  step_whatsapp_drive_link: string;
   step_sync: string;
   step_drive: string;
+  step_mentor_access: string;
   step_curriculum: string;
   step_cosmic_student: string;
   step_cosmic_project: string;
@@ -530,6 +569,9 @@ interface ProjectSetupRow {
   cosmic_student_id: string | null;
   cosmic_project_id: string | null;
   last_error: string | null;
+  sheet_details_seen: SheetDetails | null;
+  details_revision: number;
+  applied_revision: number;
 }
 
 function toProjectSetup(row: ProjectSetupRow): ProjectSetup {
@@ -542,8 +584,10 @@ function toProjectSetup(row: ProjectSetupRow): ProjectSetup {
     submittedBy: row.submitted_by,
     status: row.status,
     stepWhatsapp: row.step_whatsapp,
+    stepWhatsappDriveLink: row.step_whatsapp_drive_link,
     stepSync: row.step_sync,
     stepDrive: row.step_drive,
+    stepMentorAccess: row.step_mentor_access,
     stepCurriculum: row.step_curriculum,
     stepCosmicStudent: row.step_cosmic_student,
     stepCosmicProject: row.step_cosmic_project,
@@ -552,6 +596,9 @@ function toProjectSetup(row: ProjectSetupRow): ProjectSetup {
     cosmicStudentId: row.cosmic_student_id,
     cosmicProjectId: row.cosmic_project_id,
     lastError: row.last_error,
+    sheetDetailsSeen: row.sheet_details_seen,
+    detailsRevision: row.details_revision,
+    appliedRevision: row.applied_revision,
   };
 }
 
@@ -574,6 +621,15 @@ export interface ProjectSetupInput {
   submittedBy: string | null;
 }
 
+/** Compare the two fields the sheet and the dashboard both write. */
+function detailsDiffer(
+  a: { title: string | null; description: string | null },
+  b: { title: string | null; description: string | null }
+): boolean {
+  return (a.title ?? '') !== (b.title ?? '') ||
+    (a.description ?? '') !== (b.description ?? '');
+}
+
 /**
  * Upsert the dashboard-owned fields and (re)set the submitted_at gate that
  * makes the case eligible for the setup cron.
@@ -589,6 +645,29 @@ export async function upsertProjectSetup(
   input: ProjectSetupInput
 ): Promise<ProjectSetup> {
   const now = new Date().toISOString();
+
+  // A changed title or description re-opens the WhatsApp step on a case that
+  // has already run, so the group name and description follow the correction
+  // instead of being stranded at whatever the first submission said. Read
+  // first: PostgREST has no atomic increment, and both writers of this column
+  // (here and the sheet cron) move at human pace on a single replica.
+  const existing = await findProjectSetup(caseId);
+  const changed =
+    !existing ||
+    detailsDiffer(
+      { title: existing.projectTitle, description: existing.projectDescription },
+      { title: input.projectTitle, description: input.projectDescription }
+    );
+  const revision = (existing?.detailsRevision ?? 0) + (changed ? 1 : 0);
+
+  // A case that already finished is not in the setup cron's working set, so an
+  // edit to a completed project would otherwise never reach the WhatsApp
+  // group. Re-opening it puts it back in the queue, where the revision it has
+  // already applied tells it to redo the group name and description and
+  // nothing else. RUNNING is left alone -- a pass is mid-flight, and the next
+  // one picks the change up.
+  const reopen = changed && existing?.status === 'DONE';
+
   const rows = await call<ProjectSetupRow[]>(
     'POST',
     '/project_setups?on_conflict=case_id',
@@ -600,6 +679,8 @@ export async function upsertProjectSetup(
         curriculum_subject: input.curriculumSubject,
         submitted_by: input.submittedBy,
         submitted_at: now,
+        details_revision: revision,
+        ...(reopen ? { status: 'PENDING', completed_at: null, attempts: 0 } : {}),
         updated_at: now,
       },
       prefer: 'return=representation,resolution=merge-duplicates',
@@ -607,6 +688,105 @@ export async function upsertProjectSetup(
   );
   const row = rows[0];
   if (!row) throw new DbError('project_setups upsert returned no row', 500, rows);
+  return toProjectSetup(row);
+}
+
+/**
+ * Record what the intake sheet now holds for a case.
+ *
+ * Only ever called once a write to the sheet has actually landed. If the
+ * mirror-write fails, this is deliberately skipped: the sheet still holds the
+ * old text, so leaving the stored copy alone keeps the two agreeing and stops
+ * the next sync pass reading that stale text back over the new details.
+ */
+export async function markSheetDetailsSeen(
+  caseId: string,
+  seen: SheetDetails
+): Promise<void> {
+  await call('PATCH', `/project_setups?case_id=eq.${encodeURIComponent(caseId)}`, {
+    body: { sheet_details_seen: seen, updated_at: new Date().toISOString() },
+    prefer: 'return=minimal',
+  });
+}
+
+export interface SheetSyncCase {
+  caseId: string;
+  sheetRow: number;
+  /** Null when the case has no project_setups row yet. */
+  setup: ProjectSetup | null;
+}
+
+/**
+ * Every case that came from a sheet row, with its setup row if it has one.
+ *
+ * One request with a left embed, so a case whose details have never been
+ * entered still comes back (with setup null) and can be created from the sheet.
+ */
+export async function listCasesForSheetSync(): Promise<SheetSyncCase[]> {
+  const params = new URLSearchParams({
+    select: 'id,sheet_row,project_setups(*)',
+    sheet_row: 'not.is.null',
+  });
+  const rows = await call<
+    { id: string; sheet_row: number; project_setups: ProjectSetupRow | ProjectSetupRow[] | null }[]
+  >('GET', `/group_cases?${params}`);
+
+  return rows.map((row) => {
+    // A one-to-one embed comes back as an object, but PostgREST returns an
+    // array when it reads the relationship the other way round -- accept both.
+    const embedded = Array.isArray(row.project_setups)
+      ? row.project_setups[0] ?? null
+      : row.project_setups;
+    return {
+      caseId: row.id,
+      sheetRow: row.sheet_row,
+      setup: embedded ? toProjectSetup(embedded) : null,
+    };
+  });
+}
+
+export interface SheetDetailsPatch {
+  projectTitle: string;
+  projectDescription: string | null;
+  /** Set only when the sheet row is complete enough to make the case eligible. */
+  submit: boolean;
+  seen: SheetDetails;
+  revision: number;
+  /** True when the case had already finished -- see upsertProjectSetup. */
+  reopen?: boolean;
+}
+
+/**
+ * Apply an edit made in the sheet, and record the sheet values that produced
+ * it in the same write -- the two must not be able to drift apart.
+ *
+ * curriculum_subject is never touched here: it is only ever chosen in the
+ * dashboard, and a sheet edit must not clear it.
+ */
+export async function applySheetDetails(
+  caseId: string,
+  patch: SheetDetailsPatch
+): Promise<ProjectSetup> {
+  const now = new Date().toISOString();
+  const rows = await call<ProjectSetupRow[]>(
+    'POST',
+    '/project_setups?on_conflict=case_id',
+    {
+      body: {
+        case_id: caseId,
+        project_title: patch.projectTitle,
+        project_description: patch.projectDescription,
+        sheet_details_seen: patch.seen,
+        details_revision: patch.revision,
+        ...(patch.submit ? { submitted_at: now, submitted_by: 'intake sheet' } : {}),
+        ...(patch.reopen ? { status: 'PENDING', completed_at: null, attempts: 0 } : {}),
+        updated_at: now,
+      },
+      prefer: 'return=representation,resolution=merge-duplicates',
+    }
+  );
+  const row = rows[0];
+  if (!row) throw new DbError('project_setups sheet sync returned no row', 500, rows);
   return toProjectSetup(row);
 }
 
@@ -620,6 +800,10 @@ export interface DbMentor {
   variants: Record<string, string> | null;
   email: string | null;
   phone: string | null;
+  /** Their SYNC users.id; null until the SYNC account has been made. */
+  syncUserId: string | null;
+  /** Why the last attempt to make it failed, for the backfill and the UI. */
+  syncError: string | null;
   createdAt: Date;
 }
 
@@ -630,6 +814,8 @@ interface DbMentorRow {
   variants: Record<string, string> | null;
   email: string | null;
   phone: string | null;
+  sync_user_id: string | null;
+  sync_error: string | null;
   created_at: string;
 }
 
@@ -641,6 +827,8 @@ function toMentor(row: DbMentorRow): DbMentor {
     variants: row.variants,
     email: row.email,
     phone: row.phone,
+    syncUserId: row.sync_user_id,
+    syncError: row.sync_error,
     createdAt: new Date(row.created_at),
   };
 }
@@ -680,6 +868,35 @@ export async function insertMentor(input: NewMentor): Promise<DbMentor> {
   const row = rows[0];
   if (!row) throw new DbError('mentors insert returned no row', 500, rows);
   return toMentor(row);
+}
+
+/**
+ * Mentors whose SYNC account still hasn't been made -- the backfill's working
+ * set. SYNC being down when a mentor is added must not block adding them, so
+ * the account is retried here instead.
+ */
+export async function listMentorsAwaitingSync(): Promise<DbMentor[]> {
+  const params = new URLSearchParams({
+    select: '*',
+    sync_user_id: 'is.null',
+    order: 'created_at.asc',
+  });
+  const rows = await call<DbMentorRow[]>('GET', `/mentors?${params}`);
+  return rows.map(toMentor);
+}
+
+/** Record the outcome of making a mentor's SYNC account. */
+export async function updateMentorSync(
+  id: string,
+  patch: { syncUserId?: string | null; syncError?: string | null }
+): Promise<void> {
+  const body: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  if (patch.syncUserId !== undefined) body.sync_user_id = patch.syncUserId;
+  if (patch.syncError !== undefined) body.sync_error = patch.syncError;
+  await call('PATCH', `/mentors?id=eq.${encodeURIComponent(id)}`, {
+    body,
+    prefer: 'return=minimal',
+  });
 }
 
 /** Cheapest query that proves the API, the key and the tables all work. */

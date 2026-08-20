@@ -4,6 +4,8 @@ import { STAGE_LABELS } from "@/lib/format"
 import type { Stage } from "@/lib/types"
 
 const STAGE_STYLES: Record<Stage, string> = {
+  AWAITING_JOIN:
+    "border-slate-500/30 bg-slate-500/10 text-slate-700 dark:text-slate-400",
   NEW: "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-400",
   IN_PROGRESS:
     "border-blue-500/30 bg-blue-500/10 text-blue-700 dark:text-blue-400",
@@ -13,6 +15,7 @@ const STAGE_STYLES: Record<Stage, string> = {
 }
 
 const DOT_STYLES: Record<Stage, string> = {
+  AWAITING_JOIN: "bg-slate-400",
   NEW: "bg-amber-500",
   IN_PROGRESS: "bg-blue-500",
   MENTOR_ASSIGNED: "bg-emerald-500",

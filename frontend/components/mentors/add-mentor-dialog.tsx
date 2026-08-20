@@ -43,17 +43,24 @@ export function AddMentorDialog({
     }
   }, [open])
 
-  const canSave = name.trim().length > 0 && intro.trim().length > 0 && !pending
+  // Phone is required: it is what the mentor's SYNC account is keyed on, and
+  // where their group invite link is sent. Without it they can be introduced
+  // but never linked to a group, a Drive folder or a COSMIC project.
+  const canSave =
+    name.trim().length > 0 &&
+    intro.trim().length > 0 &&
+    phone.trim().length > 0 &&
+    !pending
 
   async function handleSave() {
-    if (!name.trim() || !intro.trim()) return
+    if (!name.trim() || !intro.trim() || !phone.trim()) return
     setPending(true)
     try {
       await createMentor({
         name: name.trim(),
         intro: intro.trim(),
         email: email.trim() || undefined,
-        phone: phone.trim() || undefined,
+        phone: phone.trim(),
       })
       toast.success("Mentor added", {
         description: `${name.trim()} is now in the directory.`,
@@ -118,7 +125,7 @@ export function AddMentorDialog({
             />
           </Field>
           <Field>
-            <FieldLabel htmlFor="m-phone">Phone</FieldLabel>
+            <FieldLabel htmlFor="m-phone">Phone (required)</FieldLabel>
             <Input
               id="m-phone"
               value={phone}

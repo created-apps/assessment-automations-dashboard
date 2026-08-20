@@ -4,6 +4,8 @@ import * as db from './db';
 import * as slack from './slack';
 import * as templates from './templates';
 import { summarise } from './cases';
+import { runSheetSync } from './sheet-sync';
+import { runMentorSyncBackfill } from './mentor-sync';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -62,6 +64,17 @@ export async function runMentorNudge(): Promise<NudgeSummary> {
       continue;
     }
 
+    // A nudge is a reply in the case's own thread, and only a case that never
+    // got past AWAITING_JOIN lacks one -- which these stages exclude. Guarding
+    // anyway: nudging into the channel instead of the thread would be worse
+    // than not nudging at all.
+    const { slackChannel, slackThreadTs } = groupCase;
+    if (!slackChannel || !slackThreadTs) {
+      summary.skipped += 1;
+      console.warn(`[${groupCase.id}] no Slack thread, not nudged`);
+      continue;
+    }
+
     const daysOpen = Math.max(
       1,
       Math.floor((now - groupCase.createdAt.getTime()) / (24 * 60 * 60 * 1000))
@@ -74,8 +87,8 @@ export async function runMentorNudge(): Promise<NudgeSummary> {
             summarise(groupCase),
             config.nudge.giveUpAfterDays
           ),
-          channel: groupCase.slackChannel,
-          threadTs: groupCase.slackThreadTs,
+          channel: slackChannel,
+          threadTs: slackThreadTs,
         });
         await db.updateCase(groupCase.id, {
           stage: 'ABANDONED',
@@ -88,8 +101,8 @@ export async function runMentorNudge(): Promise<NudgeSummary> {
 
       await slack.postMessage({
         text: templates.mentorNudge(summarise(groupCase), daysOpen),
-        channel: groupCase.slackChannel,
-        threadTs: groupCase.slackThreadTs,
+        channel: slackChannel,
+        threadTs: slackThreadTs,
       });
       // PostgREST has no atomic increment. This job is the only writer of
       // nudge_count, it runs single-replica, and the guarded() wrapper stops
@@ -145,6 +158,14 @@ function schedule(name: string, expression: string, job: () => Promise<unknown>)
 }
 
 export function startScheduler() {
-  // One job. Slack is notification-only now, so nothing is read on a timer.
+  // Slack is notification-only, so nothing is read from it on a timer.
   schedule('mentor nudge', config.nudge.cron, runMentorNudge);
+
+  // The intake sheet is the second place project details get edited, so it is
+  // polled rather than waited on -- there is no webhook to hang this off.
+  schedule('sheet sync', config.jobs.sheetSyncCron, runSheetSync);
+
+  // Catches up mentors whose SYNC account couldn't be made when they were
+  // added. Usually a no-op.
+  schedule('mentor sync backfill', config.jobs.mentorSyncCron, runMentorSyncBackfill);
 }

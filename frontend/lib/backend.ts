@@ -109,7 +109,8 @@ export interface NewMentorBody {
   name: string
   intro: string
   email?: string
-  phone?: string
+  /** Required: keys the mentor's SYNC account and receives their group invite. */
+  phone: string
   actor?: string
 }
 

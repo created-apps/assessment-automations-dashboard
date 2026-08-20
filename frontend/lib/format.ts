@@ -63,6 +63,7 @@ export function formatPhone(raw: string | null | undefined): string {
 }
 
 export const STAGE_LABELS: Record<Stage, string> = {
+  AWAITING_JOIN: "Awaiting join",
   NEW: "New",
   IN_PROGRESS: "In progress",
   MENTOR_ASSIGNED: "Mentor assigned",

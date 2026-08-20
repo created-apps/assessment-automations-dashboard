@@ -103,3 +103,45 @@ export async function writeRowCells(
   }
   return { skippedHeaders };
 }
+
+/**
+ * Read the project columns for every row in the tab, keyed by row number.
+ *
+ * One request covers every case, so the sync pass costs a single API call
+ * regardless of how many projects are open. Values are trimmed; a row whose
+ * trailing cells are blank comes back short from Sheets and reads as ''.
+ */
+export async function readProjectDetails(): Promise<
+  Map<number, { title: string; description: string }>
+> {
+  const range = `${quoteTab(config.sheet.tab)}!A:ZZ`;
+  const data = await call<{ values?: string[][] }>(
+    'GET',
+    `/values/${encodeURIComponent(range)}`
+  );
+
+  const values = data.values ?? [];
+  const out = new Map<number, { title: string; description: string }>();
+  if (values.length === 0) return out;
+
+  const headers = (values[0] ?? []).map((h) => String(h ?? '').trim());
+  const titleCol = headers.indexOf('Project Name');
+  const descriptionCol = headers.indexOf('Project Description');
+  if (titleCol === -1 && descriptionCol === -1) {
+    throw new Error(
+      'Sheet has neither a "Project Name" nor a "Project Description" column ' +
+        `-- headers seen: ${headers.filter(Boolean).join(' | ')}`
+    );
+  }
+
+  const cell = (cells: string[], index: number) =>
+    index === -1 ? '' : String(cells[index] ?? '').trim();
+
+  values.slice(1).forEach((cells, i) => {
+    out.set(i + 2, {
+      title: cell(cells, titleCol),
+      description: cell(cells, descriptionCol),
+    });
+  });
+  return out;
+}

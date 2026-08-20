@@ -2,7 +2,7 @@ import express from 'express';
 import { z } from 'zod';
 import { config } from './config';
 import * as db from './db';
-import { openCase } from './cases';
+import { openCase, registerCase } from './cases';
 import { api } from './api';
 import { startScheduler } from './scheduler';
 import { refreshMentors } from './mentors';
@@ -48,6 +48,71 @@ const intakeSchema = z.object({
  * the group with everything known about it and opens the Slack thread that
  * decides what happens next.
  */
+/**
+ * POST /group-registered
+ *
+ * Called by the group-creation service the moment a WhatsApp group exists,
+ * before anyone has joined it. Records the case so the project shows on the
+ * dashboard -- and so its title and description can be filled in -- while the
+ * family is still holding an invite link.
+ *
+ * No Slack thread is opened: there is nothing to decide until they join, and
+ * that is what POST /group-created does when they do. Safe to call repeatedly.
+ */
+app.post('/group-registered', async (req, res) => {
+  const auth = req.get('authorization') ?? '';
+  const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+  if (token !== config.intake.secret) {
+    return res.status(401).json({ ok: false, error: 'bad or missing token' });
+  }
+
+  const parsed = intakeSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({
+      ok: false,
+      error: 'Invalid request body',
+      issues: parsed.error.issues.map((i) => ({
+        path: i.path.join('.'),
+        message: i.message,
+      })),
+    });
+  }
+
+  const body = parsed.data;
+
+  try {
+    const result = await registerCase({
+      chatId: body.chat_id,
+      groupName: body.group_name,
+      studentName: body.student_name,
+      studentPhone: body.student_phone ?? null,
+      studentEmail: body.student_email ?? null,
+      parentName: body.parent_name ?? null,
+      parentPhone: body.parent_phone ?? null,
+      parentEmail: body.parent_email ?? null,
+      projectName: body.project_name ?? null,
+      source: body.source ?? null,
+      sheetRow: body.sheet_row ?? null,
+      groupRequestId: body.group_request_id ?? null,
+      supabaseGroupId: body.supabase_group_id ?? null,
+      inviteLink: body.invite_link ?? null,
+      payload: body,
+    });
+
+    return res.status(result.created ? 201 : 200).json({
+      ok: true,
+      created: result.created,
+      case_id: result.case.id,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('group-registered failed:', err);
+    // 5xx on purpose: the caller should retry, and registerCase is a no-op the
+    // second time round.
+    return res.status(502).json({ ok: false, error: message });
+  }
+});
+
 app.post('/group-created', async (req, res) => {
   const auth = req.get('authorization') ?? '';
   const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';

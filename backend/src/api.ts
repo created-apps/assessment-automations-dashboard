@@ -12,6 +12,7 @@ import {
 } from './cases';
 import { PeriskopeError } from './periskope';
 import * as sheets from './sheets';
+import { ensureMentorOnSync } from './mentor-sync';
 
 /**
  * The dashboard's API.
@@ -168,6 +169,7 @@ api.get('/mentors', (_req, res) => {
       ...(m.variants ? { variants: m.variants } : {}),
       email: m.email ?? null,
       phone: m.phone ?? null,
+      sync_user_id: m.syncUserId ?? null,
     }))
   );
 });
@@ -176,7 +178,10 @@ const newMentorSchema = z.object({
   name: z.string().trim().min(1).max(200),
   intro: z.string().trim().min(1).max(8000),
   email: z.string().trim().email().max(320).optional(),
-  phone: z.string().trim().min(3).max(40).optional(),
+  // Required, not optional: SYNC's users.phone_number is NOT NULL and is what
+  // an account is keyed on, and it is also the number the group invite is DM'd
+  // to. A mentor without one can be introduced but never linked to anything.
+  phone: z.string().trim().min(3).max(40),
   variants: z.record(z.string(), z.string()).optional(),
   actor: z.string().trim().min(1).optional(),
 });
@@ -205,10 +210,18 @@ api.post('/mentors', async (req, res) => {
       name: parsed.data.name,
       intro: parsed.data.intro,
       email: parsed.data.email ?? null,
-      phone: parsed.data.phone ?? null,
+      phone: parsed.data.phone,
       variants: parsed.data.variants ?? null,
       createdBy: parsed.data.actor ?? null,
     });
+
+    // Then give them a SYNC account. Deliberately after the local insert and
+    // deliberately not fatal: SYNC being unreachable shouldn't stop the team
+    // adding a mentor, and the backfill retries whatever didn't land. The
+    // warning goes back with the 201 so it is seen straight away rather than
+    // only in the logs.
+    const { syncUserId, warning } = await ensureMentorOnSync(mentor);
+
     await refreshMentors();
     return res.status(201).json({
       name: mentor.name,
@@ -216,6 +229,8 @@ api.post('/mentors', async (req, res) => {
       ...(mentor.variants ? { variants: mentor.variants } : {}),
       email: mentor.email,
       phone: mentor.phone,
+      sync_user_id: syncUserId,
+      ...(warning ? { warning } : {}),
     });
   } catch (err) {
     if (err instanceof db.DbError && err.status === 409) {
@@ -249,8 +264,10 @@ function toApiProjectSetup(s: db.ProjectSetup) {
     submitted_by: s.submittedBy,
     status: s.status,
     step_whatsapp: s.stepWhatsapp,
+    step_whatsapp_drive_link: s.stepWhatsappDriveLink,
     step_sync: s.stepSync,
     step_drive: s.stepDrive,
+    step_mentor_access: s.stepMentorAccess,
     step_curriculum: s.stepCurriculum,
     step_cosmic_student: s.stepCosmicStudent,
     step_cosmic_project: s.stepCosmicProject,
@@ -328,6 +345,14 @@ api.post('/cases/:id/project-setup', async (req, res) => {
         await sheets.writeRowCells(groupCase.sheetRow, {
           'Project Name': parsed.data.project_title,
           'Project Description': description,
+        });
+        // Only now that the sheet actually holds these values: this is what
+        // tells the sync cron the row matches the database, so its next pass
+        // sees no edit and leaves the details alone. Skipping it on failure is
+        // deliberate -- see markSheetDetailsSeen.
+        await db.markSheetDetailsSeen(req.params.id, {
+          title: parsed.data.project_title,
+          description,
         });
       } catch (err) {
         console.error(`[case ${req.params.id}] writing project details to the sheet failed:`, err);
