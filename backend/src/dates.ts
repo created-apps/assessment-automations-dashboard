@@ -67,14 +67,30 @@ export function parseDeadline(raw: string): Deadline {
     }
   }
 
-  // "2026-05-25"
-  const iso = input.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  // "2026-05-25", and "2026-05-25T20:52:33.131Z" -- the dashboard's date picker
+  // used to send a full timestamp, which matched none of the patterns here and
+  // fell through to the verbatim passthrough at the bottom, putting the raw
+  // "2026-08-27T20:52:33.131Z" into the message a family received.
+  //
+  // Dates that arrive in this shape come from a machine, so they are printed
+  // back as they came, YYYY-MM-DD, rather than in the "25 May 2026" wording
+  // used for a phrase somebody typed.
+  //
+  // The time half is discarded, not converted: a deadline is a calendar day.
+  // The picker now sends the local date so there is nothing to convert, and
+  // for anything still sending a timestamp, its own date half is the best
+  // reading available here -- the sender's timezone isn't known.
+  const iso = input.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:[T ][\d:.]+\s*(?:Z|[+-]\d{2}:?\d{2})?)?$/);
   if (iso) {
     const year = Number(iso[1]);
     const month = Number(iso[2]) - 1;
     const day = Number(iso[3]);
-    if (month >= 0 && month <= 11) {
-      return { text: format(day, month, year), date: new Date(year, month, day) };
+    if (month >= 0 && month <= 11 && day >= 1 && day <= 31) {
+      const pad = (n: number) => String(n).padStart(2, '0');
+      return {
+        text: `${year}-${pad(month + 1)}-${pad(day)}`,
+        date: new Date(year, month, day),
+      };
     }
   }
 

@@ -19,7 +19,6 @@ import { Field, FieldLabel } from "@/components/ui/field"
 import { Spinner } from "@/components/ui/spinner"
 import { WhatsappPreview } from "@/components/whatsapp-preview"
 import { useMessagePreview } from "@/lib/messages"
-import { formatDate } from "@/lib/format"
 import { sendCsAssessment, sendPrototypingAssessment } from "@/lib/api"
 import { authorizeSend } from "@/lib/authorize-send"
 import type { GroupCase } from "@/lib/types"
@@ -31,6 +30,22 @@ function defaultDeadline(): Date {
   const d = new Date()
   d.setDate(d.getDate() + 7)
   return d
+}
+
+/**
+ * The picked day as YYYY-MM-DD, read off the LOCAL calendar.
+ *
+ * Not toISOString(): that converts to UTC first, so any local time before the
+ * UTC offset rolls the date back a day. In IST a deadline picked for the 28th
+ * became "2026-08-27T20:52:33.131Z" and the family was told the 27th. A
+ * deadline is a calendar day, not an instant, so no timezone belongs in it.
+ */
+function toLocalDate(d: Date): string {
+  return (
+    `${d.getFullYear()}-` +
+    `${String(d.getMonth() + 1).padStart(2, "0")}-` +
+    `${String(d.getDate()).padStart(2, "0")}`
+  )
 }
 
 export function AssessmentDialog({
@@ -54,11 +69,11 @@ export function AssessmentDialog({
     if (open) setDeadline(defaultDeadline())
   }, [open])
 
-  const iso = deadline.toISOString()
+  const deadlineDate = toLocalDate(deadline)
   // Rendered by the backend, by the same templates that produce the real send.
   const { message, isLoading: previewLoading } = useMessagePreview(groupCase.id, {
     kind: kind === "CS" ? "CS_ASSESSMENT" : "PROTOTYPING_ASSESSMENT",
-    deadline: iso,
+    deadline: deadlineDate,
   })
 
   const title = kind === "CS" ? "Send CS assessment" : "Send Prototyping assessment"
@@ -67,8 +82,8 @@ export function AssessmentDialog({
     setPending(true)
     try {
       const actor = await authorizeSend()
-      if (kind === "CS") await sendCsAssessment(groupCase.id, iso, actor)
-      else await sendPrototypingAssessment(groupCase.id, iso, actor)
+      if (kind === "CS") await sendCsAssessment(groupCase.id, deadlineDate, actor)
+      else await sendPrototypingAssessment(groupCase.id, deadlineDate, actor)
       toast.success("Assessment sent", {
         description: `${groupCase.student_name} will receive it on WhatsApp.`,
       })
@@ -107,7 +122,7 @@ export function AssessmentDialog({
               }
             >
               <CalendarIcon data-icon="inline-start" />
-              {formatDate(iso)}
+              {deadline.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}
             </PopoverTrigger>
             <PopoverContent className="w-auto p-0" align="start">
               <Calendar
