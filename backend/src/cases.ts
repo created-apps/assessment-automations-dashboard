@@ -30,6 +30,9 @@ export interface IntakeInput {
   groupRequestId?: string | null;
   supabaseGroupId?: string | null;
   inviteLink?: string | null;
+  /** The Drive folder intake created with the group, if any. */
+  driveFolderId?: string | null;
+  driveFolderUrl?: string | null;
   payload: unknown;
 }
 
@@ -125,6 +128,21 @@ export async function registerCase(input: IntakeInput): Promise<OpenCaseResult> 
     payload: input.payload,
     stage: 'AWAITING_JOIN',
   });
+
+  // Record the Drive folder straight away, so the project-setup service reuses
+  // it instead of making a second one when the case reaches its Drive step.
+  // Best-effort: the case matters more than the bookkeeping, and the folder id
+  // also travels on the payload if this fails.
+  if (input.driveFolderId) {
+    try {
+      await db.recordDriveFolder(created.id, {
+        driveFolderId: input.driveFolderId,
+        driveFolderUrl: input.driveFolderUrl ?? null,
+      });
+    } catch (err) {
+      console.error(`[${created.id}] could not record the Drive folder:`, err);
+    }
+  }
 
   console.log(`[${created.id}] registered "${input.groupName}" (awaiting join)`);
   return { case: created, created: true };

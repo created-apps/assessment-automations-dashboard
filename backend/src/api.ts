@@ -374,6 +374,120 @@ api.post('/cases/:id/project-setup', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// Queued actions
+// ---------------------------------------------------------------------------
+
+function toApiQueued(q: db.QueuedAction) {
+  return {
+    id: q.id,
+    case_id: q.caseId,
+    position: q.position,
+    kind: q.kind,
+    params: q.params,
+    status: q.status,
+    queued_by: q.queuedBy,
+    error: q.error,
+    sent_at: iso(q.sentAt),
+    created_at: iso(q.createdAt),
+  };
+}
+
+/**
+ * What each kind needs when it eventually runs.
+ *
+ * Assessments take a NUMBER OF DAYS, not a date: a queued action can wait a
+ * week on a family joining, and the date is worked out at send time so it is
+ * never stale. See the queue runner.
+ */
+const queueItemSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('ADD_MENTOR'),
+    mentor: z.string().trim().min(1),
+    variant: z.string().trim().min(1).optional(),
+  }),
+  z.object({
+    kind: z.literal('CS_ASSESSMENT'),
+    deadline_days: z.number().int().min(1).max(365),
+  }),
+  z.object({
+    kind: z.literal('PROTOTYPING_ASSESSMENT'),
+    deadline_days: z.number().int().min(1).max(365),
+  }),
+  z.object({
+    kind: z.literal('SCHEDULE_MEETING'),
+    host: z.string().trim().min(1),
+  }),
+]);
+
+const queueSchema = z.intersection(
+  queueItemSchema,
+  z.object({ actor: z.string().trim().min(1).optional() })
+);
+
+/** GET /api/cases/:id/queue -- what is lined up, in the order it will run. */
+api.get('/cases/:id/queue', async (req, res) => {
+  try {
+    const queued = await db.listQueuedForCase(req.params.id);
+    return res.json(queued.map(toApiQueued));
+  } catch (err) {
+    return fail(res, err);
+  }
+});
+
+/**
+ * POST /api/cases/:id/queue
+ *
+ * Add one action to the end of the case's queue. Nothing is sent here -- the
+ * runner sends it once the family has joined and the welcome has gone out.
+ *
+ * Queuing on a case that is already past that point is allowed and simply
+ * means it goes out on the next tick; the dashboard uses the immediate path
+ * there instead, but the API doesn't need to care which.
+ */
+api.post('/cases/:id/queue', async (req, res) => {
+  const parsed = queueSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({
+      error: 'Invalid request body',
+      issues: parsed.error.issues.map((i) => ({
+        path: i.path.join('.'),
+        message: i.message,
+      })),
+    });
+  }
+
+  try {
+    const groupCase = await db.findCaseById(req.params.id);
+    if (!groupCase) return res.status(404).json({ error: 'case not found' });
+
+    const { actor, kind, ...params } = parsed.data;
+    const queued = await db.enqueueAction(req.params.id, {
+      kind,
+      params,
+      queuedBy: actor ?? null,
+    });
+    return res.status(201).json(toApiQueued(queued));
+  } catch (err) {
+    return fail(res, err);
+  }
+});
+
+/** DELETE /api/cases/:id/queue/:queuedId -- drop something not yet sent. */
+api.delete('/cases/:id/queue/:queuedId', async (req, res) => {
+  try {
+    const cancelled = await db.cancelQueuedAction(req.params.id, req.params.queuedId);
+    if (!cancelled) {
+      return res
+        .status(409)
+        .json({ error: 'that action is not queued any more -- it may already have been sent' });
+    }
+    return res.status(204).end();
+  } catch (err) {
+    return fail(res, err);
+  }
+});
+
+// ---------------------------------------------------------------------------
 // Actions
 // ---------------------------------------------------------------------------
 

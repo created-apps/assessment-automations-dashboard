@@ -25,7 +25,7 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field"
 import { Spinner } from "@/components/ui/spinner"
 import { WhatsappPreview } from "@/components/whatsapp-preview"
-import { addMentor } from "@/lib/api"
+import { addMentor, queueAction } from "@/lib/api"
 import { authorizeSend } from "@/lib/authorize-send"
 import type { GroupCase, Mentor } from "@/lib/types"
 
@@ -69,10 +69,30 @@ export function MentorDialog({
         : mentor.intro
       : ""
 
+  /**
+   * Nobody is in the group yet, so this is queued rather than sent. The runner
+   * sends it, in order with anything else queued, once the welcome goes out.
+   */
+  const queueing = groupCase.stage === "AWAITING_JOIN"
+
   async function handleSend() {
     if (!mentor) return
     setPending(true)
     try {
+      if (queueing) {
+        await queueAction(groupCase.id, {
+          kind: "ADD_MENTOR",
+          mentor: mentor.name,
+          ...(variant !== DEFAULT_VARIANT ? { variant } : {}),
+        })
+        toast.success("Mentor introduction queued", {
+          description: `${mentor.name} will be introduced once the family joins ${groupCase.group_name}.`,
+        })
+        onOpenChange(false)
+        onDone?.()
+        return
+      }
+
       const actor = await authorizeSend()
       await addMentor(
         groupCase.id,
@@ -100,10 +120,11 @@ export function MentorDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>Introduce a mentor</DialogTitle>
+          <DialogTitle>{queueing ? "Queue a mentor introduction" : "Introduce a mentor"}</DialogTitle>
           <DialogDescription>
-            Pick a mentor and, if available, a subject-specific introduction to send to{" "}
-            {groupCase.group_name}.
+            {queueing
+              ? `Pick a mentor and, if available, a subject-specific introduction. Nobody has joined ${groupCase.group_name} yet, so it will be queued and sent once the welcome goes out.`
+              : `Pick a mentor and, if available, a subject-specific introduction to send to ${groupCase.group_name}.`}
           </DialogDescription>
         </DialogHeader>
 
@@ -168,7 +189,7 @@ export function MentorDialog({
         <DialogFooter showCloseButton>
           <Button onClick={handleSend} disabled={pending || !mentor}>
             {pending ? <Spinner data-icon="inline-start" /> : <SendIcon data-icon="inline-start" />}
-            Send introduction
+            {queueing ? "Add to queue" : "Send introduction"}
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -6,6 +6,7 @@ import * as templates from './templates';
 import { summarise } from './cases';
 import { runSheetSync } from './sheet-sync';
 import { runMentorSyncBackfill } from './mentor-sync';
+import { runQueue } from './queue';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -168,4 +169,8 @@ export function startScheduler() {
   // Catches up mentors whose SYNC account couldn't be made when they were
   // added. Usually a no-op.
   schedule('mentor sync backfill', config.jobs.mentorSyncCron, runMentorSyncBackfill);
+
+  // Drains the per-case action queues once a family has joined. Ticks often;
+  // the pacing between two messages to the same group is QUEUE_GAP_SECONDS.
+  schedule('action queue', config.jobs.queueCron, runQueue);
 }

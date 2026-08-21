@@ -116,3 +116,24 @@ export interface SessionPayload {
   name: string
   role: Role
 }
+
+/** An action lined up to run once the family has joined and been welcomed. */
+export type QueuedStatus = "QUEUED" | "SENT" | "FAILED" | "CANCELLED"
+
+export interface QueuedAction {
+  id: string
+  case_id: string
+  position: number
+  kind: ActionKind
+  /**
+   * What the action needs when it runs. Assessments carry `deadline_days`
+   * rather than a date: the queue can wait days on a family joining, so the
+   * date is worked out at send time and is never stale.
+   */
+  params: Record<string, unknown>
+  status: QueuedStatus
+  queued_by: string | null
+  error: string | null
+  sent_at: string | null
+  created_at: string
+}

@@ -39,6 +39,9 @@ const intakeSchema = z.object({
   group_request_id: z.string().trim().optional(),
   supabase_group_id: z.string().trim().optional(),
   invite_link: z.string().trim().optional(),
+  // The Drive folder intake made alongside the group, if it managed to.
+  drive_folder_id: z.string().trim().optional(),
+  drive_folder_url: z.string().trim().optional(),
 });
 
 /**
@@ -96,6 +99,8 @@ app.post('/group-registered', async (req, res) => {
       groupRequestId: body.group_request_id ?? null,
       supabaseGroupId: body.supabase_group_id ?? null,
       inviteLink: body.invite_link ?? null,
+      driveFolderId: body.drive_folder_id ?? null,
+      driveFolderUrl: body.drive_folder_url ?? null,
       payload: body,
     });
 

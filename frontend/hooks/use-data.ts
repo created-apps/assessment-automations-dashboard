@@ -6,6 +6,7 @@ import {
   getCase,
   getCaseActions,
   getProjectSetup,
+  getQueue,
   listCaseSummaries,
   listCurriculumSubjects,
   listMentors,
@@ -33,6 +34,11 @@ export function useProjectSetup(id: string | null) {
   return useSWR(id ? ["project-setup", id] : null, () =>
     getProjectSetup(id as string),
   )
+}
+
+/** What is lined up for a case, in the order it will run. */
+export function useQueue(id: string | null) {
+  return useSWR(id ? ["queue", id] : null, () => getQueue(id as string))
 }
 
 export function useCurriculumSubjects() {

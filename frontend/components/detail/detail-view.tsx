@@ -25,6 +25,7 @@ import { Separator } from "@/components/ui/separator"
 import { StageBadge } from "@/components/stage-badge"
 import { CopyButton } from "@/components/copy-button"
 import { ContactsPanel } from "@/components/detail/contacts-panel"
+import { QueuePanel } from "@/components/detail/queue-panel"
 import { Timeline } from "@/components/detail/timeline"
 import { ActionsBar } from "@/components/detail/actions-bar"
 import { useCase, useCaseActions, useMentors } from "@/hooks/use-data"
@@ -142,6 +143,8 @@ export function DetailView({ id }: { id: string }) {
             mentors={mentors ?? []}
             onDone={refresh}
           />
+          <QueuePanel groupCase={groupCase} />
+
           <Timeline actions={actions} isLoading={actionsLoading} />
         </div>
 

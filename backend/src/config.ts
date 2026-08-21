@@ -224,5 +224,21 @@ export const config = {
     sheetSyncCron: optional('SHEET_SYNC_CRON') || '*/5 * * * *',
     /** Retrying the SYNC accounts of mentors added while SYNC was down. */
     mentorSyncCron: optional('MENTOR_SYNC_CRON') || '*/15 * * * *',
+    /**
+     * Draining the per-case action queues. Every minute: the runner sends at
+     * most one action per case per tick, so the real pacing dial is
+     * queue.gapSeconds below, not this.
+     */
+    queueCron: optional('QUEUE_CRON') || '* * * * *',
+  },
+
+  queue: {
+    /**
+     * How long to leave between two queued messages to the same group. A
+     * family that has just joined and read the welcome should not get the
+     * assessment, the mentor introduction and a booking link in the same
+     * breath.
+     */
+    gapSeconds: num('QUEUE_GAP_SECONDS', 60),
   },
 } as const;

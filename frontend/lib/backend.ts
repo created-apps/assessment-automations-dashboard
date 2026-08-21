@@ -4,6 +4,7 @@ import type {
   GroupCase,
   Mentor,
   ProjectSetup,
+  QueuedAction,
 } from "./types"
 
 /**
@@ -182,5 +183,32 @@ export function saveProjectSetup(
   return call<ProjectSetup>(
     `/api/cases/${encodeURIComponent(caseId)}/project-setup`,
     { method: "POST", body },
+  )
+}
+
+export type QueueBody =
+  | { kind: "ADD_MENTOR"; mentor: string; variant?: string; actor?: string }
+  | { kind: "CS_ASSESSMENT"; deadline_days: number; actor?: string }
+  | { kind: "PROTOTYPING_ASSESSMENT"; deadline_days: number; actor?: string }
+  | { kind: "SCHEDULE_MEETING"; host: string; actor?: string }
+
+export function listQueue(caseId: string): Promise<QueuedAction[]> {
+  return call<QueuedAction[]>(`/api/cases/${encodeURIComponent(caseId)}/queue`)
+}
+
+export function queueAction(
+  caseId: string,
+  body: QueueBody,
+): Promise<QueuedAction> {
+  return call<QueuedAction>(`/api/cases/${encodeURIComponent(caseId)}/queue`, {
+    method: "POST",
+    body,
+  })
+}
+
+export function cancelQueued(caseId: string, queuedId: string): Promise<void> {
+  return call<void>(
+    `/api/cases/${encodeURIComponent(caseId)}/queue/${encodeURIComponent(queuedId)}`,
+    { method: "DELETE" },
   )
 }

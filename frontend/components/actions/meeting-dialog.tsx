@@ -18,7 +18,7 @@ import { Field, FieldLabel } from "@/components/ui/field"
 import { Spinner } from "@/components/ui/spinner"
 import { WhatsappPreview } from "@/components/whatsapp-preview"
 import { useMessagePreview } from "@/lib/messages"
-import { scheduleMeeting } from "@/lib/api"
+import { queueAction, scheduleMeeting } from "@/lib/api"
 import { authorizeSend } from "@/lib/authorize-send"
 import type { GroupCase, MeetingHost } from "@/lib/types"
 
@@ -48,9 +48,25 @@ export function MeetingDialog({
     host,
   })
 
+  /**
+   * Nobody is in the group yet, so this is queued rather than sent. The runner
+   * sends it, in order with anything else queued, once the welcome goes out.
+   */
+  const queueing = groupCase.stage === "AWAITING_JOIN"
+
   async function handleSend() {
     setPending(true)
     try {
+      if (queueing) {
+        await queueAction(groupCase.id, { kind: "SCHEDULE_MEETING", host })
+        toast.success("Booking link queued", {
+          description: `It will send once ${groupCase.student_name} joins the group.`,
+        })
+        onOpenChange(false)
+        onDone?.()
+        return
+      }
+
       const actor = await authorizeSend()
       await scheduleMeeting(groupCase.id, host, actor)
       toast.success("Booking link sent", {
@@ -106,7 +122,7 @@ export function MeetingDialog({
         <DialogFooter showCloseButton>
           <Button onClick={handleSend} disabled={pending || previewLoading || !message}>
             {pending ? <Spinner data-icon="inline-start" /> : <SendIcon data-icon="inline-start" />}
-            Send message
+            {queueing ? "Add to queue" : "Send message"}
           </Button>
         </DialogFooter>
       </DialogContent>

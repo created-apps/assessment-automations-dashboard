@@ -5,6 +5,7 @@ import type {
   MeetingHost,
   Mentor,
   ProjectSetup,
+  QueuedAction,
 } from "./types"
 
 /**
@@ -232,5 +233,45 @@ export function saveProjectSetup(
   return request<ProjectSetup>(
     `/api/cases/${encodeURIComponent(caseId)}/project-setup`,
     { method: "POST", body: JSON.stringify(body) },
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Queued actions
+//
+// A case that nobody has joined yet can have its follow-up lined up in
+// advance. The dashboard uses these instead of the send-now calls while the
+// case is AWAITING_JOIN; the runner sends them, in order, once the welcome has
+// fired. Assessments carry a number of DAYS rather than a date, so a queue
+// that waits on a family still sends a deadline that is that far away.
+// ---------------------------------------------------------------------------
+
+export type QueueBody =
+  | { kind: "ADD_MENTOR"; mentor: string; variant?: string }
+  | { kind: "CS_ASSESSMENT"; deadline_days: number }
+  | { kind: "PROTOTYPING_ASSESSMENT"; deadline_days: number }
+  | { kind: "SCHEDULE_MEETING"; host: string }
+
+export function getQueue(caseId: string): Promise<QueuedAction[]> {
+  return request<QueuedAction[]>(`/api/cases/${encodeURIComponent(caseId)}/queue`)
+}
+
+export function queueAction(
+  caseId: string,
+  body: QueueBody,
+): Promise<QueuedAction> {
+  return request<QueuedAction>(`/api/cases/${encodeURIComponent(caseId)}/queue`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  })
+}
+
+export function cancelQueuedAction(
+  caseId: string,
+  queuedId: string,
+): Promise<void> {
+  return request<void>(
+    `/api/cases/${encodeURIComponent(caseId)}/queue/${encodeURIComponent(queuedId)}`,
+    { method: "DELETE" },
   )
 }

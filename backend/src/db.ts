@@ -532,6 +532,7 @@ export interface ProjectSetup {
   stepCosmicStudent: string;
   stepCosmicProject: string;
   stepCosmicSyncGroup: string;
+  driveFolderId: string | null;
   driveFolderUrl: string | null;
   cosmicStudentId: string | null;
   cosmicProjectId: string | null;
@@ -565,6 +566,7 @@ interface ProjectSetupRow {
   step_cosmic_student: string;
   step_cosmic_project: string;
   step_cosmic_sync_group: string;
+  drive_folder_id: string | null;
   drive_folder_url: string | null;
   cosmic_student_id: string | null;
   cosmic_project_id: string | null;
@@ -592,6 +594,7 @@ function toProjectSetup(row: ProjectSetupRow): ProjectSetup {
     stepCosmicStudent: row.step_cosmic_student,
     stepCosmicProject: row.step_cosmic_project,
     stepCosmicSyncGroup: row.step_cosmic_sync_group,
+    driveFolderId: row.drive_folder_id,
     driveFolderUrl: row.drive_folder_url,
     cosmicStudentId: row.cosmic_student_id,
     cosmicProjectId: row.cosmic_project_id,
@@ -706,6 +709,35 @@ export async function markSheetDetailsSeen(
   await call('PATCH', `/project_setups?case_id=eq.${encodeURIComponent(caseId)}`, {
     body: { sheet_details_seen: seen, updated_at: new Date().toISOString() },
     prefer: 'return=minimal',
+  });
+}
+
+/**
+ * Record the Drive folder made at intake against a case.
+ *
+ * Creates the project_setups row if the case doesn't have one yet -- at
+ * registration it never does -- but deliberately does NOT set submitted_at:
+ * having a folder is not the same as having project details, and the setup
+ * cron must still wait for those. merge-duplicates means an existing row keeps
+ * everything else it holds, and a folder already on record is not overwritten
+ * by a later replay.
+ */
+export async function recordDriveFolder(
+  caseId: string,
+  folder: { driveFolderId: string; driveFolderUrl: string | null }
+): Promise<void> {
+  const existing = await findProjectSetup(caseId);
+  if (existing?.driveFolderUrl) return; // already knows a folder -- leave it
+
+  const now = new Date().toISOString();
+  await call('POST', '/project_setups?on_conflict=case_id', {
+    body: {
+      case_id: caseId,
+      drive_folder_id: folder.driveFolderId,
+      drive_folder_url: folder.driveFolderUrl,
+      updated_at: now,
+    },
+    prefer: 'return=minimal,resolution=merge-duplicates',
   });
 }
 
@@ -897,6 +929,179 @@ export async function updateMentorSync(
     body,
     prefer: 'return=minimal',
   });
+}
+
+// ---------------------------------------------------------------------------
+// queued_actions -- follow-up lined up before the family has joined.
+
+export type QueuedStatus = 'QUEUED' | 'SENT' | 'FAILED' | 'CANCELLED';
+
+export interface QueuedAction {
+  id: string;
+  caseId: string;
+  position: number;
+  kind: ActionKind;
+  params: Record<string, unknown>;
+  status: QueuedStatus;
+  caseActionId: string | null;
+  queuedBy: string | null;
+  error: string | null;
+  attempts: number;
+  sentAt: Date | null;
+  createdAt: Date;
+}
+
+interface QueuedActionRow {
+  id: string;
+  case_id: string;
+  position: number;
+  kind: ActionKind;
+  params: Record<string, unknown> | null;
+  status: QueuedStatus;
+  case_action_id: string | null;
+  queued_by: string | null;
+  error: string | null;
+  attempts: number;
+  sent_at: string | null;
+  created_at: string;
+}
+
+function toQueued(row: QueuedActionRow): QueuedAction {
+  return {
+    id: row.id,
+    caseId: row.case_id,
+    position: row.position,
+    kind: row.kind,
+    params: row.params ?? {},
+    status: row.status,
+    caseActionId: row.case_action_id,
+    queuedBy: row.queued_by,
+    error: row.error,
+    attempts: row.attempts,
+    sentAt: date(row.sent_at),
+    createdAt: new Date(row.created_at),
+  };
+}
+
+/** Everything queued for one case, in the order it will run. */
+export async function listQueuedForCase(caseId: string): Promise<QueuedAction[]> {
+  const params = new URLSearchParams({
+    select: '*',
+    case_id: `eq.${caseId}`,
+    order: 'position.asc,created_at.asc',
+  });
+  const rows = await call<QueuedActionRow[]>('GET', `/queued_actions?${params}`);
+  return rows.map(toQueued);
+}
+
+export interface NewQueuedAction {
+  kind: ActionKind;
+  params: Record<string, unknown>;
+  queuedBy?: string | null;
+}
+
+/**
+ * Add one action to the end of a case's queue.
+ *
+ * The position is read then written rather than computed in SQL: PostgREST has
+ * no expression inserts, the dashboard is the only writer, and two people
+ * queuing on the same case in the same instant would at worst produce two rows
+ * with the same position -- which the created_at tiebreak in the ordering
+ * already handles.
+ */
+export async function enqueueAction(
+  caseId: string,
+  input: NewQueuedAction
+): Promise<QueuedAction> {
+  const existing = await listQueuedForCase(caseId);
+  const position = existing.reduce((max, a) => Math.max(max, a.position), 0) + 1;
+
+  const rows = await call<QueuedActionRow[]>('POST', '/queued_actions', {
+    body: {
+      case_id: caseId,
+      position,
+      kind: input.kind,
+      params: input.params,
+      queued_by: input.queuedBy ?? null,
+    },
+    prefer: 'return=representation',
+  });
+  const row = rows[0];
+  if (!row) throw new DbError('queued_actions insert returned no row', 500, rows);
+  return toQueued(row);
+}
+
+/**
+ * Cases with something still queued, and which are past AWAITING_JOIN -- the
+ * runner's working set. The embedded stage filter does the gating in one query
+ * rather than fetching every queue and discarding most of them.
+ */
+export async function listCasesWithQueue(): Promise<string[]> {
+  const params = new URLSearchParams();
+  params.set('select', 'case_id,group_cases!inner(stage)');
+  params.set('status', 'eq.QUEUED');
+  params.set('group_cases.stage', 'neq.AWAITING_JOIN');
+  params.set('order', 'position.asc');
+
+  const rows = await call<{ case_id: string }[]>('GET', `/queued_actions?${params}`);
+  return [...new Set(rows.map((r) => r.case_id))];
+}
+
+export interface QueuedPatch {
+  status?: QueuedStatus;
+  caseActionId?: string | null;
+  error?: string | null;
+  attempts?: number;
+  sentAt?: Date | null;
+}
+
+export async function updateQueuedAction(
+  id: string,
+  patch: QueuedPatch
+): Promise<QueuedAction> {
+  const body: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  if (patch.status !== undefined) body.status = patch.status;
+  if (patch.caseActionId !== undefined) body.case_action_id = patch.caseActionId;
+  if (patch.error !== undefined) body.error = patch.error;
+  if (patch.attempts !== undefined) body.attempts = patch.attempts;
+  if (patch.sentAt !== undefined) body.sent_at = patch.sentAt?.toISOString() ?? null;
+
+  const rows = await call<QueuedActionRow[]>(
+    'PATCH',
+    `/queued_actions?id=eq.${encodeURIComponent(id)}`,
+    { body, prefer: 'return=representation' }
+  );
+  const row = rows[0];
+  if (!row) throw new DbError(`queued_actions ${id} not found`, 404, rows);
+  return toQueued(row);
+}
+
+/**
+ * Claim a queued action for sending: QUEUED -> SENT is not it -- the send has
+ * to happen first -- so this flips it out of QUEUED by bumping attempts under
+ * a status filter, which is the compare-and-set that stops two ticks running
+ * the same row. Returns null when someone else got there first.
+ */
+export async function claimQueuedAction(id: string, attempts: number): Promise<QueuedAction | null> {
+  const rows = await call<QueuedActionRow[]>(
+    'PATCH',
+    `/queued_actions?id=eq.${encodeURIComponent(id)}&status=eq.QUEUED&attempts=eq.${attempts}`,
+    {
+      body: { attempts: attempts + 1, updated_at: new Date().toISOString() },
+      prefer: 'return=representation',
+    }
+  );
+  return rows[0] ? toQueued(rows[0]) : null;
+}
+
+/** Remove a queued action that hasn't run. Sent ones are history, not queue. */
+export async function cancelQueuedAction(caseId: string, id: string): Promise<boolean> {
+  const rows = await call<QueuedActionRow[]>(
+    'PATCH',
+    `/queued_actions?id=eq.${encodeURIComponent(id)}&case_id=eq.${encodeURIComponent(caseId)}&status=eq.QUEUED`,
+    { body: { status: 'CANCELLED', updated_at: new Date().toISOString() }, prefer: 'return=representation' }
+  );
+  return rows.length > 0;
 }
 
 /** Cheapest query that proves the API, the key and the tables all work. */
