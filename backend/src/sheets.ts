@@ -53,6 +53,47 @@ async function call<T>(
   return (text ? JSON.parse(text) : null) as T;
 }
 
+/**
+ * Read one named column from ANY spreadsheet (by id) into a lower-cased,
+ * trimmed set of values -- used to check a form-response sheet for the emails
+ * that have submitted. Unlike the writer above this isn't bound to the intake
+ * sheet, so it takes the spreadsheet id explicitly.
+ */
+export async function readColumnValues(
+  sheetId: string,
+  tab: string,
+  header: string
+): Promise<Set<string>> {
+  const token = await googleAccessToken(SCOPE);
+  const range = `${quoteTab(tab)}!A:ZZ`;
+  const res = await fetch(
+    `${API}/${sheetId}/values/${encodeURIComponent(range)}`,
+    { headers: { authorization: `Bearer ${token}` } }
+  );
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(`Sheets read ${sheetId} returned ${res.status}: ${text.slice(0, 300)}`);
+  }
+  const data = (text ? JSON.parse(text) : {}) as { values?: string[][] };
+  const values = data.values ?? [];
+  if (values.length === 0) return new Set();
+
+  const headers = (values[0] ?? []).map((h) => String(h ?? '').trim());
+  const col = headers.indexOf(header.trim());
+  if (col === -1) {
+    throw new Error(
+      `Response sheet ${sheetId} has no "${header}" column -- headers seen: ${headers.filter(Boolean).join(' | ')}`
+    );
+  }
+
+  const out = new Set<string>();
+  for (const row of values.slice(1)) {
+    const v = String(row[col] ?? '').trim().toLowerCase();
+    if (v) out.add(v);
+  }
+  return out;
+}
+
 // Header row is stable across a deploy; read it once and cache the name->index.
 let headerIndex: Map<string, number> | null = null;
 

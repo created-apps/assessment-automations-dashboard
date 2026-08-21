@@ -1104,6 +1104,70 @@ export async function cancelQueuedAction(caseId: string, id: string): Promise<bo
   return rows.length > 0;
 }
 
+// ---------------------------------------------------------------------------
+// Assessment completions -- which (case, assessment) pairs have been submitted
+// (their email showed up in the response sheet) and announced in Slack.
+
+export type AssessmentKind = 'CS_ASSESSMENT' | 'PROTOTYPING_ASSESSMENT';
+
+export interface SentAssessment {
+  caseId: string;
+  kind: AssessmentKind;
+  sentAt: Date;
+}
+
+/**
+ * The assessments that were actually sent (action status OK) on or after
+ * `since` -- the working set the completion cron checks. Newest first.
+ */
+export async function listSentAssessments(since: Date): Promise<SentAssessment[]> {
+  const params = new URLSearchParams({
+    select: 'case_id,kind,created_at',
+    kind: 'in.(CS_ASSESSMENT,PROTOTYPING_ASSESSMENT)',
+    status: 'eq.OK',
+    created_at: `gte.${since.toISOString()}`,
+    order: 'created_at.desc',
+  });
+  const rows = await call<
+    { case_id: string; kind: AssessmentKind; created_at: string }[]
+  >('GET', `/case_actions?${params}`);
+  return rows.map((r) => ({
+    caseId: r.case_id,
+    kind: r.kind,
+    sentAt: new Date(r.created_at),
+  }));
+}
+
+/** The (case_id|kind) pairs already recorded as completed, for a quick lookup. */
+export async function listCompletedAssessmentKeys(): Promise<Set<string>> {
+  const rows = await call<{ case_id: string; kind: AssessmentKind }[]>(
+    'GET',
+    '/assessment_completions?select=case_id,kind'
+  );
+  return new Set(rows.map((r) => `${r.case_id}|${r.kind}`));
+}
+
+/**
+ * Record a completion. Returns true only when this is the first time (the row
+ * was inserted), so the caller announces it in Slack exactly once. A second
+ * call for the same (case, kind) hits the primary key and is ignored.
+ */
+export async function recordAssessmentCompletion(
+  caseId: string,
+  kind: AssessmentKind,
+  studentEmail: string | null
+): Promise<boolean> {
+  const rows = await call<{ case_id: string }[]>(
+    'POST',
+    '/assessment_completions?on_conflict=case_id,kind',
+    {
+      body: { case_id: caseId, kind, student_email: studentEmail },
+      prefer: 'return=representation,resolution=ignore-duplicates',
+    }
+  );
+  return rows.length > 0;
+}
+
 /** Cheapest query that proves the API, the key and the tables all work. */
 export async function ping(): Promise<void> {
   await call('GET', '/group_cases?select=id&limit=1');

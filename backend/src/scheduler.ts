@@ -7,6 +7,7 @@ import { summarise } from './cases';
 import { runSheetSync } from './sheet-sync';
 import { runMentorSyncBackfill } from './mentor-sync';
 import { runQueue } from './queue';
+import { runAssessmentCompletions } from './assessment-completions';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -173,4 +174,8 @@ export function startScheduler() {
   // Drains the per-case action queues once a family has joined. Ticks often;
   // the pacing between two messages to the same group is QUEUE_GAP_SECONDS.
   schedule('action queue', config.jobs.queueCron, runQueue);
+
+  // Hourly: reads the assessment response sheets and announces in Slack when a
+  // student has completed the CS or Prototyping form.
+  schedule('assessment completions', config.jobs.assessmentCompletionCron, runAssessmentCompletions);
 }

@@ -10,6 +10,7 @@
     "start": "node dist/server.js",
     "nudge": "tsx src/nudge-once.ts",
     "mentors": "tsx src/mentors-cli.ts",
+    "check-assessments": "tsx src/check-assessments-once.ts",
     "typecheck": "tsc --noEmit"
   },
   "engines": {

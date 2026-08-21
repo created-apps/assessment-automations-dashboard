@@ -142,6 +142,28 @@ export const config = {
       'https://docs.google.com/forms/d/e/1FAIpQLSdrh1pzdFH8XG5QMZcXpo3EX6a5wl4wN9rgb_oj__XsU8AMPg/viewform?usp=sf_link',
   },
 
+  /**
+   * The Google Form response sheets for the two assessments. When a student's
+   * email shows up in one of these, they have completed that assessment -- the
+   * completion cron checks them and posts to Slack. Optional per assessment:
+   * an unset sheet id means that assessment isn't checked. Share each sheet
+   * with the service account (GOOGLE_CREDENTIALS_BASE64) so it can read them.
+   */
+  assessmentResponses: {
+    cs: {
+      sheetId: optional('CS_RESPONSES_SHEET_ID'),
+      tab: optional('CS_RESPONSES_TAB') || 'Form Responses 1',
+    },
+    prototyping: {
+      sheetId: optional('PROTOTYPING_RESPONSES_SHEET_ID'),
+      tab: optional('PROTOTYPING_RESPONSES_TAB') || 'Form Responses 1',
+    },
+    // The column in the response sheet holding the respondent's email.
+    emailColumn: optional('ASSESSMENT_RESPONSES_EMAIL_COLUMN') || 'Email Address',
+    // Stop checking a case this many days after its assessment was sent.
+    checkWindowDays: num('ASSESSMENT_CHECK_WINDOW_DAYS', 30),
+  },
+
   booking: {
     hosts: bookingHosts(),
   },
@@ -230,6 +252,11 @@ export const config = {
      * queue.gapSeconds below, not this.
      */
     queueCron: optional('QUEUE_CRON') || '* * * * *',
+    /**
+     * Checking the assessment response sheets for newly completed forms.
+     * Hourly by default; each tick reads the two response sheets once.
+     */
+    assessmentCompletionCron: optional('ASSESSMENT_COMPLETION_CRON') || '0 * * * *',
   },
 
   queue: {

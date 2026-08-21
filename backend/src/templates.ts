@@ -39,6 +39,24 @@ export function mentorIntroduction(intro: string): string {
   return intro;
 }
 
+/** Posted to Slack when a student's email appears in an assessment's responses. */
+export function assessmentCompleted(input: {
+  studentName: string;
+  studentEmail: string | null;
+  groupName: string;
+  caseId: string;
+  dashboardUrl?: string;
+}, kind: 'CS_ASSESSMENT' | 'PROTOTYPING_ASSESSMENT'): string {
+  const label = kind === 'CS_ASSESSMENT' ? 'Computer Science' : 'Prototyping';
+  const who = input.studentEmail
+    ? `${input.studentName} (${input.studentEmail})`
+    : input.studentName;
+  const link = input.dashboardUrl
+    ? `\n${input.dashboardUrl}/cases/${input.caseId}`
+    : '';
+  return `:white_check_mark: *${label} assessment completed* by ${who} — group "${input.groupName}".${link}`;
+}
+
 /** Sent privately to the mentor after they're introduced, with the group link. */
 export function mentorGroupInvite(groupName: string, inviteLink: string): string {
   return (
