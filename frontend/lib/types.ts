@@ -88,7 +88,12 @@ export interface ProjectSetup {
   last_error: string | null
 }
 
-export type MeetingHost = "Aashna Saraf" | "Urja Jhaveri" | "Dhruv Singh"
+export type MeetingHost =
+  | "Aashna Saraf"
+  | "Urja Jhaveri"
+  | "Dhruv Singh"
+  | "Dhruv + Aashna"
+  | "Urja + Aashna"
 
 export interface CaseSummary extends GroupCase {
   last_action_kind: ActionKind | null

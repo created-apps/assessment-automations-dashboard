@@ -13,7 +13,14 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Field, FieldLabel } from "@/components/ui/field"
 import { Spinner } from "@/components/ui/spinner"
 import { WhatsappPreview } from "@/components/whatsapp-preview"
@@ -22,7 +29,13 @@ import { queueAction, scheduleMeeting } from "@/lib/api"
 import { authorizeSend } from "@/lib/authorize-send"
 import type { GroupCase, MeetingHost } from "@/lib/types"
 
-const HOSTS: MeetingHost[] = ["Aashna Saraf", "Urja Jhaveri", "Dhruv Singh"]
+const HOSTS: MeetingHost[] = [
+  "Aashna Saraf",
+  "Urja Jhaveri",
+  "Dhruv Singh",
+  "Dhruv + Aashna",
+  "Urja + Aashna",
+]
 
 export function MeetingDialog({
   groupCase,
@@ -98,20 +111,20 @@ export function MeetingDialog({
 
         <Field>
           <FieldLabel>Meeting host</FieldLabel>
-          <ToggleGroup
-            value={[host]}
-            onValueChange={(value) => {
-              const next = value[0] as MeetingHost | undefined
-              if (next) setHost(next)
-            }}
-            className="w-full"
-          >
-            {HOSTS.map((h) => (
-              <ToggleGroupItem key={h} value={h} className="flex-1 text-xs">
-                {h.split(" ")[0]}
-              </ToggleGroupItem>
-            ))}
-          </ToggleGroup>
+          <Select value={host} onValueChange={(v) => setHost(v as MeetingHost)}>
+            <SelectTrigger className="w-full">
+              <SelectValue placeholder="Select a host" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectGroup>
+                {HOSTS.map((h) => (
+                  <SelectItem key={h} value={h}>
+                    {h}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            </SelectContent>
+          </Select>
         </Field>
 
         <div className="flex flex-col gap-2">

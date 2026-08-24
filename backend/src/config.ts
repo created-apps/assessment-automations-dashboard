@@ -66,6 +66,9 @@ function bookingHosts(): { name: string; url: string }[] {
     { name: 'Aashna Saraf', env: 'CALENDLY_AASHNA_SARAF' },
     { name: 'Urja Jhaveri', env: 'CALENDLY_URJA_JHAVERI' },
     { name: 'Dhruv Singh', env: 'CALENDLY_DHRUV_SINGH' },
+    // Joint availability links -- two hosts on one Calendly booking page.
+    { name: 'Dhruv + Aashna', env: 'CALENDLY_DHRUV_AASHNA' },
+    { name: 'Urja + Aashna', env: 'CALENDLY_URJA_AASHNA' },
   ];
 
   const configured = hosts
