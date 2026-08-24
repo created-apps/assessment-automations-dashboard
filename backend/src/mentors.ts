@@ -68,6 +68,22 @@ export async function refreshMentors(): Promise<void> {
   }
 }
 
+/**
+ * The directory entry holding this email, or null.
+ *
+ * Exact (case-folded) -- an email is either the mentor's or it isn't, and two
+ * entries sharing one is treated as no match rather than picked between. Used
+ * by the sheet intake, where nobody is around to confirm a near miss.
+ */
+export function findMentorByEmail(email: string): Mentor | null {
+  const wanted = (email ?? '').trim().toLowerCase();
+  if (!wanted) return null;
+  const matches = allMentors().filter(
+    (m) => (m.email ?? '').trim().toLowerCase() === wanted
+  );
+  return matches.length === 1 ? matches[0]! : null;
+}
+
 export type MentorMatch = MatchResult<Mentor>;
 
 export function findMentor(query: string): MentorMatch {

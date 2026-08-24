@@ -744,6 +744,11 @@ export async function recordDriveFolder(
 export interface SheetSyncCase {
   caseId: string;
   sheetRow: number;
+  groupName: string;
+  /** The three things that say whether a mentor has already been dealt with. */
+  stage: CaseStage;
+  mentorName: string | null;
+  mentorIntroSentAt: Date | null;
   /** Null when the case has no project_setups row yet. */
   setup: ProjectSetup | null;
 }
@@ -756,11 +761,20 @@ export interface SheetSyncCase {
  */
 export async function listCasesForSheetSync(): Promise<SheetSyncCase[]> {
   const params = new URLSearchParams({
-    select: 'id,sheet_row,project_setups(*)',
+    select:
+      'id,sheet_row,group_name,stage,mentor_name,mentor_intro_sent_at,project_setups(*)',
     sheet_row: 'not.is.null',
   });
   const rows = await call<
-    { id: string; sheet_row: number; project_setups: ProjectSetupRow | ProjectSetupRow[] | null }[]
+    {
+      id: string;
+      sheet_row: number;
+      group_name: string;
+      stage: CaseStage;
+      mentor_name: string | null;
+      mentor_intro_sent_at: string | null;
+      project_setups: ProjectSetupRow | ProjectSetupRow[] | null;
+    }[]
   >('GET', `/group_cases?${params}`);
 
   return rows.map((row) => {
@@ -772,6 +786,10 @@ export async function listCasesForSheetSync(): Promise<SheetSyncCase[]> {
     return {
       caseId: row.id,
       sheetRow: row.sheet_row,
+      groupName: row.group_name,
+      stage: row.stage,
+      mentorName: row.mentor_name,
+      mentorIntroSentAt: date(row.mentor_intro_sent_at),
       setup: embedded ? toProjectSetup(embedded) : null,
     };
   });
@@ -1045,6 +1063,23 @@ export async function listCasesWithQueue(): Promise<string[]> {
 
   const rows = await call<{ case_id: string }[]>('GET', `/queued_actions?${params}`);
   return [...new Set(rows.map((r) => r.case_id))];
+}
+
+/**
+ * Cases that already have an ADD_MENTOR row of any status.
+ *
+ * One request for the whole set, because the sheet intake asks this of every
+ * case it looks at. Status is deliberately not filtered: a mentor introduction
+ * that was queued and then cancelled, or that failed, was a decision someone
+ * made, and the sheet must not quietly queue a second one behind it.
+ */
+export async function listCaseIdsWithMentorQueued(): Promise<Set<string>> {
+  const params = new URLSearchParams({
+    select: 'case_id',
+    kind: 'eq.ADD_MENTOR',
+  });
+  const rows = await call<{ case_id: string }[]>('GET', `/queued_actions?${params}`);
+  return new Set(rows.map((r) => r.case_id));
 }
 
 export interface QueuedPatch {

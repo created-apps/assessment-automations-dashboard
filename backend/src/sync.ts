@@ -57,24 +57,75 @@ export type MentorResolution =
   | { status: 'none' }
   | { status: 'ambiguous'; count: number };
 
+/** Fold an email for comparison -- SYNC stores whatever was typed. */
+const normEmail = (s: string): string => (s ?? '').trim().toLowerCase();
+
+const MENTOR_COLUMNS = 'id,name,phone_number,email';
+
+interface MentorRow {
+  id: string;
+  name: string;
+  phone_number: string | null;
+  email: string | null;
+}
+
+const toResolved = (r: MentorRow): ResolvedMentor => ({
+  id: r.id,
+  name: r.name,
+  phone: r.phone_number,
+  email: r.email,
+});
+
+/**
+ * Every SYNC mentor, in one request.
+ *
+ * Read once per pass by callers that check many cases in a row (the sheet
+ * intake), so a hundred rows naming a mentor still costs a single call.
+ */
+export async function listMentors(): Promise<ResolvedMentor[]> {
+  const rows = await call<MentorRow[]>(
+    'GET',
+    `/users?select=${MENTOR_COLUMNS}&role=eq.mentor`
+  );
+  return rows.map(toResolved);
+}
+
+/**
+ * Pick the mentor a name and/or an email is pointing at, out of a directory
+ * already read with listMentors.
+ *
+ * Email first: it is the one field ops copy rather than retype, and two
+ * mentors sharing a spelling of their name is likelier than two sharing an
+ * address. Name is the fallback, and exact (after normalisation) -- zero or
+ * several matches come back as 'none'/'ambiguous' so the caller can warn
+ * rather than link the wrong person.
+ */
+export function matchMentor(
+  mentors: ResolvedMentor[],
+  input: { name?: string; email?: string }
+): MentorResolution {
+  const email = normEmail(input.email ?? '');
+  if (email) {
+    const byEmail = mentors.filter((m) => m.email && normEmail(m.email) === email);
+    if (byEmail.length === 1) return { status: 'matched', mentor: byEmail[0]! };
+    if (byEmail.length > 1) return { status: 'ambiguous', count: byEmail.length };
+  }
+
+  const name = norm(input.name ?? '');
+  if (!name) return { status: 'none' };
+  const byName = mentors.filter((m) => norm(m.name) === name);
+  if (byName.length === 0) return { status: 'none' };
+  if (byName.length > 1) return { status: 'ambiguous', count: byName.length };
+  return { status: 'matched', mentor: byName[0]! };
+}
+
 /**
  * Find a SYNC mentor by exact (normalised) name. Refuses to guess: zero or
  * multiple matches come back as 'none'/'ambiguous' so the caller can warn
  * rather than pick the wrong person.
  */
 export async function resolveMentor(name: string): Promise<MentorResolution> {
-  const rows = await call<
-    { id: string; name: string; phone_number: string | null; email: string | null }[]
-  >('GET', `/users?select=id,name,phone_number,email&role=eq.mentor`);
-  const target = norm(name);
-  const matches = rows.filter((r) => norm(r.name) === target);
-  if (matches.length === 0) return { status: 'none' };
-  if (matches.length > 1) return { status: 'ambiguous', count: matches.length };
-  const m = matches[0]!;
-  return {
-    status: 'matched',
-    mentor: { id: m.id, name: m.name, phone: m.phone_number, email: m.email },
-  };
+  return matchMentor(await listMentors(), { name });
 }
 
 /** The SYNC group id for a WhatsApp JID, or null if SYNC hasn't onboarded it. */

@@ -145,16 +145,28 @@ export async function writeRowCells(
   return { skippedHeaders };
 }
 
+/** One intake row, as far as this service reads it. */
+export interface SheetRowValues {
+  /** The pair either writer can edit; stored verbatim as sheet_details_seen. */
+  details: { title: string; description: string };
+  /** The mentor ops named on the row. Blank when the cell is empty. */
+  mentorName: string;
+  mentorEmail: string;
+}
+
 /**
- * Read the project columns for every row in the tab, keyed by row number.
+ * Read the columns this service cares about for every row in the tab, keyed by
+ * row number.
  *
  * One request covers every case, so the sync pass costs a single API call
  * regardless of how many projects are open. Values are trimmed; a row whose
  * trailing cells are blank comes back short from Sheets and reads as ''.
+ *
+ * The project columns must exist -- syncing them is the whole point of the
+ * pass. The mentor columns are optional: a sheet without them simply never
+ * names a mentor, which is the same as every mentor cell being blank.
  */
-export async function readProjectDetails(): Promise<
-  Map<number, { title: string; description: string }>
-> {
+export async function readProjectDetails(): Promise<Map<number, SheetRowValues>> {
   const range = `${quoteTab(config.sheet.tab)}!A:ZZ`;
   const data = await call<{ values?: string[][] }>(
     'GET',
@@ -162,7 +174,7 @@ export async function readProjectDetails(): Promise<
   );
 
   const values = data.values ?? [];
-  const out = new Map<number, { title: string; description: string }>();
+  const out = new Map<number, SheetRowValues>();
   if (values.length === 0) return out;
 
   const headers = (values[0] ?? []).map((h) => String(h ?? '').trim());
@@ -174,14 +186,20 @@ export async function readProjectDetails(): Promise<
         `-- headers seen: ${headers.filter(Boolean).join(' | ')}`
     );
   }
+  const mentorNameCol = headers.indexOf('Mentor Name');
+  const mentorEmailCol = headers.indexOf('Mentor Email');
 
   const cell = (cells: string[], index: number) =>
     index === -1 ? '' : String(cells[index] ?? '').trim();
 
   values.slice(1).forEach((cells, i) => {
     out.set(i + 2, {
-      title: cell(cells, titleCol),
-      description: cell(cells, descriptionCol),
+      details: {
+        title: cell(cells, titleCol),
+        description: cell(cells, descriptionCol),
+      },
+      mentorName: cell(cells, mentorNameCol),
+      mentorEmail: cell(cells, mentorEmailCol),
     });
   });
   return out;

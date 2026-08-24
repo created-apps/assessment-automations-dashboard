@@ -1,5 +1,11 @@
 import * as db from './db';
 import * as sheets from './sheets';
+import {
+  considerRow as considerMentorRow,
+  emptySummary as emptyMentorSummary,
+  SyncDirectory,
+  type MentorIntakeSummary,
+} from './mentor-intake';
 
 /**
  * The intake sheet as a second editor of the project title and description.
@@ -9,10 +15,12 @@ import * as sheets from './sheets';
  * exists (the Project Setup endpoint mirrors into the row); this is the pass
  * that reads the other way.
  *
- * It does one thing: keep project_setups' title/description level with the
- * sheet. It never touches the curriculum subject (dashboard-only) and never
- * runs a setup step -- Drive, COSMIC and the SYNC mentor link stay behind the
- * mentor gate in the project-setup service, exactly as before.
+ * It keeps project_setups' title/description level with the sheet, and reads
+ * the mentor columns off the same values while it is there (see
+ * mentor-intake.ts -- that part only ever adds to a case's action queue). It
+ * never touches the curriculum subject (dashboard-only) and never runs a setup
+ * step -- Drive, COSMIC and the SYNC mentor link stay behind the mentor gate in
+ * the project-setup service, exactly as before.
  *
  * ## Why a stored copy rather than timestamps
  *
@@ -34,6 +42,8 @@ export interface SheetSyncSummary {
   submitted: number;
   skipped: number;
   errors: number;
+  /** What the mentor columns on those same rows came to. */
+  mentors: MentorIntakeSummary;
 }
 
 const differs = (
@@ -49,6 +59,7 @@ export async function runSheetSync(): Promise<SheetSyncSummary> {
     submitted: 0,
     skipped: 0,
     errors: 0,
+    mentors: emptyMentorSummary(),
   };
 
   if (!sheets.sheetsConfigured()) {
@@ -56,21 +67,37 @@ export async function runSheetSync(): Promise<SheetSyncSummary> {
     return summary;
   }
 
-  const [bySheetRow, cases] = await Promise.all([
+  const [bySheetRow, cases, mentorQueued] = await Promise.all([
     sheets.readProjectDetails(),
     db.listCasesForSheetSync(),
+    db.listCaseIdsWithMentorQueued(),
   ]);
   summary.considered = cases.length;
 
+  // Read from SYNC at most once, and only if some row actually names a mentor.
+  const syncDirectory = new SyncDirectory();
+
   for (const entry of cases) {
-    const fromSheet = bySheetRow.get(entry.sheetRow);
-    if (!fromSheet) {
+    const sheetRow = bySheetRow.get(entry.sheetRow);
+    if (!sheetRow) {
       // The row is gone (deleted, or the tab was re-cut). Leave the case be:
       // its details are already stored, and guessing at a new row number would
       // be worse than doing nothing.
       summary.skipped += 1;
       continue;
     }
+
+    // Before the details branches below, all of which skip on their own terms:
+    // a row with no title yet can still name the mentor.
+    await considerMentorRow(
+      entry,
+      sheetRow,
+      syncDirectory,
+      mentorQueued,
+      summary.mentors
+    );
+
+    const fromSheet = sheetRow.details;
 
     // A blank title is never an edit. Sheets returns '' for an untouched cell
     // just as it does for a cleared one, and wiping a real project title on
