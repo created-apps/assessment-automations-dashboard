@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Plus, SearchIcon, UsersRound } from "lucide-react"
+import { Pencil, Plus, SearchIcon, UsersRound } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
@@ -21,6 +21,7 @@ import {
   InputGroupInput,
 } from "@/components/ui/input-group"
 import { AddMentorDialog } from "@/components/mentors/add-mentor-dialog"
+import { EditMentorDialog } from "@/components/mentors/edit-mentor-dialog"
 import { useCanSendActions } from "@/components/auth/auth-provider"
 import { useMentors } from "@/hooks/use-data"
 import type { Mentor } from "@/lib/types"
@@ -34,6 +35,7 @@ export function MentorsView() {
   const { data: mentors, isLoading, mutate } = useMentors()
   const [query, setQuery] = React.useState("")
   const [addOpen, setAddOpen] = React.useState(false)
+  const [editing, setEditing] = React.useState<Mentor | null>(null)
   const canManage = useCanSendActions()
 
   const filtered = React.useMemo(() => {
@@ -81,6 +83,14 @@ export function MentorsView() {
         onDone={() => mutate()}
       />
 
+      <EditMentorDialog
+        mentor={editing}
+        onOpenChange={(open) => {
+          if (!open) setEditing(null)
+        }}
+        onDone={() => mutate()}
+      />
+
       {isLoading ? (
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {[0, 1, 2, 3, 4, 5].map((i) => (
@@ -102,7 +112,11 @@ export function MentorsView() {
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {filtered.map((m) => (
-            <MentorCard key={m.name} mentor={m} />
+            <MentorCard
+              key={m.name}
+              mentor={m}
+              onEdit={canManage ? () => setEditing(m) : undefined}
+            />
           ))}
         </div>
       )}
@@ -110,7 +124,14 @@ export function MentorsView() {
   )
 }
 
-function MentorCard({ mentor }: { mentor: Mentor }) {
+function MentorCard({
+  mentor,
+  onEdit,
+}: {
+  mentor: Mentor
+  /** Omitted for viewers, who cannot change what the team sends. */
+  onEdit?: () => void
+}) {
   const variants = mentor.variants ? Object.keys(mentor.variants) : []
   return (
     <Card className="flex flex-col">
@@ -129,6 +150,17 @@ function MentorCard({ mentor }: { mentor: Mentor }) {
                 : "1 intro"}
             </span>
           </div>
+          {onEdit ? (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="ml-auto"
+              onClick={onEdit}
+              aria-label={`Edit ${mentor.name}'s introduction`}
+            >
+              <Pencil />
+            </Button>
+          ) : null}
         </div>
       </CardHeader>
       <CardContent className="flex flex-1 flex-col gap-3">

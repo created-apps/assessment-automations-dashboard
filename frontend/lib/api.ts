@@ -111,6 +111,14 @@ export function createMentor(body: {
   })
 }
 
+/** Change a mentor's introduction. Admin-only (enforced server-side). */
+export function updateMentorIntro(name: string, intro: string): Promise<Mentor> {
+  return request<Mentor>(`/api/mentors/${encodeURIComponent(name)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ intro }),
+  })
+}
+
 export function getProjectSetup(caseId: string): Promise<ProjectSetup | null> {
   return request<ProjectSetup | null>(
     `/api/cases/${encodeURIComponent(caseId)}/project-setup`,

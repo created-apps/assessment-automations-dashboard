@@ -240,6 +240,69 @@ api.post('/mentors', async (req, res) => {
   }
 });
 
+const mentorIntroSchema = z.object({
+  intro: z.string().trim().min(1).max(8000),
+  actor: z.string().trim().min(1).optional(),
+});
+
+/**
+ * PATCH /api/mentors/:name
+ *
+ * Change a mentor's introduction -- the text sent verbatim when they are
+ * introduced to a group.
+ *
+ * Seed mentors (data/mentors.json) have no row to update, so editing one writes
+ * a row carrying their other fields across; allMentors() has a DB row override
+ * a seed entry of the same name, so from then on the edited wording is what the
+ * picker, the preview and the matcher all see. No SYNC account is created here:
+ * rewording an introduction is not the same as adding a mentor, and the seed
+ * entries have no phone number to key one on anyway.
+ */
+api.patch('/mentors/:name', async (req, res) => {
+  const parsed = mentorIntroSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({
+      error: 'Invalid request body',
+      issues: parsed.error.issues.map((i) => ({
+        path: i.path.join('.'),
+        message: i.message,
+      })),
+    });
+  }
+
+  const wanted = (req.params.name ?? '').trim().toLowerCase();
+  const current = allMentors().find((m) => m.name.trim().toLowerCase() === wanted);
+  if (!current) {
+    return res.status(404).json({ error: `No mentor named "${req.params.name}".` });
+  }
+
+  try {
+    const existing = await db.findDbMentorByName(current.name);
+    const mentor = existing
+      ? await db.updateMentorIntro(existing.id, parsed.data.intro)
+      : await db.insertMentor({
+          name: current.name,
+          intro: parsed.data.intro,
+          variants: current.variants ?? null,
+          email: current.email ?? null,
+          phone: current.phone ?? null,
+          createdBy: parsed.data.actor ?? null,
+        });
+
+    await refreshMentors();
+    return res.json({
+      name: mentor.name,
+      intro: mentor.intro,
+      ...(mentor.variants ? { variants: mentor.variants } : {}),
+      email: mentor.email,
+      phone: mentor.phone,
+      sync_user_id: mentor.syncUserId,
+    });
+  } catch (err) {
+    return fail(res, err);
+  }
+});
+
 /** Who a meeting can be booked with. The URLs stay server-side. */
 api.get('/hosts', (_req, res) => {
   return res.json(hosts.map((h) => ({ name: h.name })));

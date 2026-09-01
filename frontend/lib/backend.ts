@@ -119,6 +119,17 @@ export function createMentor(body: NewMentorBody): Promise<Mentor> {
   return call<Mentor>("/api/mentors", { method: "POST", body })
 }
 
+/** Change a mentor's introduction. The name identifies them; it is unchanged. */
+export function updateMentorIntro(
+  name: string,
+  body: { intro: string; actor?: string },
+): Promise<Mentor> {
+  return call<Mentor>(`/api/mentors/${encodeURIComponent(name)}`, {
+    method: "PATCH",
+    body,
+  })
+}
+
 export function getProjectSetup(id: string): Promise<ProjectSetup | null> {
   return call<ProjectSetup | null>(
     `/api/cases/${encodeURIComponent(id)}/project-setup`,

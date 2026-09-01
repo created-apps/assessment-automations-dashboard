@@ -921,6 +921,29 @@ export async function insertMentor(input: NewMentor): Promise<DbMentor> {
 }
 
 /**
+ * The dashboard-added row for this name, or null when the name only exists in
+ * the JSON seed. Matched in memory rather than with a PostgREST filter: the
+ * table is small, and a name is free text that would otherwise have to be
+ * escaped against `ilike`'s wildcards.
+ */
+export async function findDbMentorByName(name: string): Promise<DbMentor | null> {
+  const wanted = name.trim().toLowerCase();
+  const rows = await listDbMentors();
+  return rows.find((m) => m.name.trim().toLowerCase() === wanted) ?? null;
+}
+
+/** Change a mentor's introduction, leaving the rest of the row alone. */
+export async function updateMentorIntro(id: string, intro: string): Promise<DbMentor> {
+  const rows = await call<DbMentorRow[]>('PATCH', `/mentors?id=eq.${encodeURIComponent(id)}`, {
+    body: { intro, updated_at: new Date().toISOString() },
+    prefer: 'return=representation',
+  });
+  const row = rows[0];
+  if (!row) throw new DbError('mentors update returned no row', 500, rows);
+  return toMentor(row);
+}
+
+/**
  * Mentors whose SYNC account still hasn't been made -- the backfill's working
  * set. SYNC being down when a mentor is added must not block adding them, so
  * the account is retried here instead.
@@ -929,6 +952,10 @@ export async function listMentorsAwaitingSync(): Promise<DbMentor[]> {
   const params = new URLSearchParams({
     select: '*',
     sync_user_id: 'is.null',
+    // A row with no phone number can never get a SYNC account (it is what the
+    // account is keyed on), so it is not work -- editing a seed mentor's intro
+    // writes such a row, and it would otherwise be retried on every pass.
+    phone: 'not.is.null',
     order: 'created_at.asc',
   });
   const rows = await call<DbMentorRow[]>('GET', `/mentors?${params}`);
