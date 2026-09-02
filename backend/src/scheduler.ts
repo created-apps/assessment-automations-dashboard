@@ -7,6 +7,8 @@ import { summarise } from './cases';
 import { runSheetSync } from './sheet-sync';
 import { runMentorSyncBackfill } from './mentor-sync';
 import { runQueue } from './queue';
+import { runMentorJoinCheck } from './mentor-join';
+import { runFirstClassChase } from './first-class';
 import { runAssessmentCompletions } from './assessment-completions';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -178,4 +180,12 @@ export function startScheduler() {
   // Hourly: reads the assessment response sheets and announces in Slack when a
   // student has completed the CS or Prototyping form.
   schedule('assessment completions', config.jobs.assessmentCompletionCron, runAssessmentCompletions);
+
+  // Every five minutes: sends the held mentor introduction to any group whose
+  // mentor has since joined it.
+  schedule('mentor join check', config.jobs.mentorJoinCron, runMentorJoinCheck);
+
+  // Every morning: asks each introduced group when they want their first
+  // class, until SYNC has a meeting for it. Server time, so UTC.
+  schedule('first class chase', config.jobs.firstClassCron, runFirstClassChase);
 }

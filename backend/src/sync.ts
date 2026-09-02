@@ -278,3 +278,40 @@ export async function ensureMentorUser(
   if (!user) throw new Error('SYNC users insert returned no row');
   return { outcome: 'created', user };
 }
+
+// ---------------------------------------------------------------------------
+// Meetings.
+//
+// SYNC books the classes, so it is the only place that knows whether a group
+// has one. `meetings` is keyed on group_id (SYNC's own id, which our cases
+// carry as supabase_group_id) and names the mentor who is taking it.
+
+export interface Meeting {
+  id: string;
+  group_id: string;
+  mentor_id: string | null;
+  student_id: string | null;
+  meeting_date: string | null;
+  status: string | null;
+}
+
+const MEETING_COLUMNS = 'id,group_id,mentor_id,student_id,meeting_date,status';
+
+/**
+ * Every meeting on a group, whatever its status.
+ *
+ * Cancelled ones are included on purpose: a cancellation still means the family
+ * and the mentor got as far as agreeing a time, which is the question the daily
+ * chase is asking. Most of the table is cancelled (reschedules leave the old
+ * row behind), so filtering them out here would restart the chase for groups
+ * that have plainly booked.
+ */
+export async function listMeetingsForGroup(groupId: string): Promise<Meeting[]> {
+  if (!groupId) return [];
+  const params = new URLSearchParams({
+    select: MEETING_COLUMNS,
+    group_id: `eq.${groupId}`,
+    order: 'created_at.asc',
+  });
+  return call<Meeting[]>('GET', `/meetings?${params}`);
+}

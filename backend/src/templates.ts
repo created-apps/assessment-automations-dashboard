@@ -58,6 +58,25 @@ export function assessmentCompleted(input: {
 }
 
 /** Sent privately to the mentor after they're introduced, with the group link. */
+/**
+ * The morning ask about the first class.
+ *
+ * The "@" names are plain text, not WhatsApp mentions: Periskope's send
+ * endpoint takes chat_id, message, media, poll, reply_to and options only --
+ * there is no mentions field, so a real (tappable, notifying) mention cannot
+ * be produced from this API. It still reads as addressed to both people, which
+ * is what the message is for.
+ */
+export function firstClassPrompt(input: {
+  studentName: string;
+  mentorName: string;
+}): string {
+  return (
+    `@${input.studentName} @${input.mentorName} ` +
+    'when would you like to schedule your first class?'
+  );
+}
+
 export function mentorGroupInvite(groupName: string, inviteLink: string): string {
   return (
     `Hi! You've been assigned as the mentor for "${groupName}".\n` +

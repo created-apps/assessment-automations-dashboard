@@ -66,6 +66,8 @@ export type CaseStage =
   | 'AWAITING_JOIN'
   | 'NEW'
   | 'IN_PROGRESS'
+  /** Mentor picked and invited, but not in the group yet -- intro is held. */
+  | 'AWAITING_MENTOR_JOIN'
   | 'MENTOR_ASSIGNED'
   | 'ABANDONED';
 
@@ -100,6 +102,19 @@ export interface GroupCase {
   mentorIntroSentAt: Date | null;
   /** The mentor's SYNC users.id, stamped at introduction. */
   mentorSyncUserId: string | null;
+  /** The assignment being held until the mentor joins; null once delivered. */
+  pendingMentorName: string | null;
+  pendingMentorVariant: string | null;
+  pendingMentorSince: Date | null;
+  /** First time the mentor was seen in the group's member list. */
+  mentorJoinedAt: Date | null;
+  /** Set when SYNC has a meeting for this group -- ends the first-class chase. */
+  firstClassConfirmedAt: Date | null;
+  firstClassConfirmedReason: string | null;
+  firstClassFirstPromptedAt: Date | null;
+  firstClassPromptedAt: Date | null;
+  firstClassPromptCount: number;
+  firstClassEscalatedAt: Date | null;
   /** Null until handover opens the thread (see AWAITING_JOIN). */
   slackChannel: string | null;
   slackThreadTs: string | null;
@@ -147,6 +162,16 @@ interface GroupCaseRow {
   mentor_requested_name: string | null;
   mentor_intro_sent_at: string | null;
   mentor_sync_user_id: string | null;
+  pending_mentor_name: string | null;
+  pending_mentor_variant: string | null;
+  pending_mentor_since: string | null;
+  mentor_joined_at: string | null;
+  first_class_confirmed_at: string | null;
+  first_class_confirmed_reason: string | null;
+  first_class_first_prompted_at: string | null;
+  first_class_prompted_at: string | null;
+  first_class_prompt_count: number;
+  first_class_escalated_at: string | null;
   slack_channel: string | null;
   slack_thread_ts: string | null;
   last_nudged_at: string | null;
@@ -170,8 +195,15 @@ interface CaseActionRow {
   created_at: string;
 }
 
-const date = (value: string | null): Date | null =>
-  value === null ? null : new Date(value);
+/**
+ * A timestamp column into a Date.
+ *
+ * Undefined is treated as null, not as `new Date(undefined)`: a column added by
+ * a migration that hasn't been run yet comes back absent rather than null, and
+ * an Invalid Date would propagate silently into comparisons.
+ */
+const date = (value: string | null | undefined): Date | null =>
+  value === null || value === undefined ? null : new Date(value);
 
 function toCase(row: GroupCaseRow): GroupCase {
   return {
@@ -196,6 +228,16 @@ function toCase(row: GroupCaseRow): GroupCase {
     mentorRequestedName: row.mentor_requested_name,
     mentorIntroSentAt: date(row.mentor_intro_sent_at),
     mentorSyncUserId: row.mentor_sync_user_id,
+    pendingMentorName: row.pending_mentor_name,
+    pendingMentorVariant: row.pending_mentor_variant,
+    pendingMentorSince: date(row.pending_mentor_since),
+    mentorJoinedAt: date(row.mentor_joined_at),
+    firstClassConfirmedAt: date(row.first_class_confirmed_at),
+    firstClassConfirmedReason: row.first_class_confirmed_reason,
+    firstClassFirstPromptedAt: date(row.first_class_first_prompted_at),
+    firstClassPromptedAt: date(row.first_class_prompted_at),
+    firstClassPromptCount: row.first_class_prompt_count ?? 0,
+    firstClassEscalatedAt: date(row.first_class_escalated_at),
     slackChannel: row.slack_channel,
     slackThreadTs: row.slack_thread_ts,
     lastNudgedAt: date(row.last_nudged_at),
@@ -252,6 +294,42 @@ export async function listCasesByStage(stage: CaseStage): Promise<GroupCase[]> {
   const params = new URLSearchParams({
     select: CASE_COLUMNS,
     stage: `eq.${stage}`,
+    order: 'created_at.asc',
+  });
+  const rows = await call<GroupCaseRow[]>('GET', `/group_cases?${params}`);
+  return rows.map(toCase);
+}
+
+/**
+ * Cases whose mentor introduction is written but not yet sent, oldest first.
+ *
+ * The five-minute job's working set. Filtered on the parked assignment rather
+ * than on the stage, so an introduction can never be stranded by a case that
+ * moved stage some other way.
+ */
+export async function listCasesAwaitingMentorJoin(): Promise<GroupCase[]> {
+  const params = new URLSearchParams({
+    select: CASE_COLUMNS,
+    pending_mentor_name: 'not.is.null',
+    order: 'pending_mentor_since.asc',
+  });
+  const rows = await call<GroupCaseRow[]>('GET', `/group_cases?${params}`);
+  return rows.map(toCase);
+}
+
+/**
+ * Cases whose family should be asked when they want their first class: the
+ * introduction has landed and no meeting has been found on SYNC yet.
+ *
+ * A case with no supabase_group_id cannot be looked up on SYNC at all, so it
+ * is excluded here rather than fetched and discarded every morning.
+ */
+export async function listCasesAwaitingFirstClass(): Promise<GroupCase[]> {
+  const params = new URLSearchParams({
+    select: CASE_COLUMNS,
+    stage: 'eq.MENTOR_ASSIGNED',
+    first_class_confirmed_at: 'is.null',
+    supabase_group_id: 'not.is.null',
     order: 'created_at.asc',
   });
   const rows = await call<GroupCaseRow[]>('GET', `/group_cases?${params}`);
@@ -376,6 +454,16 @@ export interface CasePatch {
   mentorRequestedName?: string | null;
   mentorIntroSentAt?: Date | null;
   mentorSyncUserId?: string | null;
+  pendingMentorName?: string | null;
+  pendingMentorVariant?: string | null;
+  pendingMentorSince?: Date | null;
+  mentorJoinedAt?: Date | null;
+  firstClassConfirmedAt?: Date | null;
+  firstClassConfirmedReason?: string | null;
+  firstClassFirstPromptedAt?: Date | null;
+  firstClassPromptedAt?: Date | null;
+  firstClassPromptCount?: number;
+  firstClassEscalatedAt?: Date | null;
   /** Written once, when handover opens the thread for a pre-join case. */
   slackChannel?: string | null;
   slackThreadTs?: string | null;
@@ -415,6 +503,16 @@ export async function updateCase(
   set('mentor_requested_name', patch.mentorRequestedName);
   set('mentor_intro_sent_at', patch.mentorIntroSentAt);
   set('mentor_sync_user_id', patch.mentorSyncUserId);
+  set('pending_mentor_name', patch.pendingMentorName);
+  set('pending_mentor_variant', patch.pendingMentorVariant);
+  set('pending_mentor_since', patch.pendingMentorSince);
+  set('mentor_joined_at', patch.mentorJoinedAt);
+  set('first_class_confirmed_at', patch.firstClassConfirmedAt);
+  set('first_class_confirmed_reason', patch.firstClassConfirmedReason);
+  set('first_class_first_prompted_at', patch.firstClassFirstPromptedAt);
+  set('first_class_prompted_at', patch.firstClassPromptedAt);
+  set('first_class_prompt_count', patch.firstClassPromptCount);
+  set('first_class_escalated_at', patch.firstClassEscalatedAt);
   set('slack_channel', patch.slackChannel);
   set('slack_thread_ts', patch.slackThreadTs);
   set('last_nudged_at', patch.lastNudgedAt);
@@ -940,6 +1038,33 @@ export async function updateMentorIntro(id: string, intro: string): Promise<DbMe
   });
   const row = rows[0];
   if (!row) throw new DbError('mentors update returned no row', 500, rows);
+  return toMentor(row);
+}
+
+/**
+ * Fill in a mentor's contact details from SYNC.
+ *
+ * Only the fields given are written, and each is left alone when it is already
+ * set here: our copy is the one the dashboard edits, so a backfill pulling from
+ * SYNC must not overwrite it. Used by the phone backfill (mentor-phone-backfill).
+ */
+export async function updateMentorContact(
+  id: string,
+  patch: { phone?: string | null; email?: string | null; syncUserId?: string | null }
+): Promise<DbMentor> {
+  const body: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  if (patch.phone !== undefined) body.phone = patch.phone;
+  if (patch.email !== undefined) body.email = patch.email;
+  if (patch.syncUserId !== undefined) {
+    body.sync_user_id = patch.syncUserId;
+    body.sync_error = null;
+  }
+  const rows = await call<DbMentorRow[]>('PATCH', `/mentors?id=eq.${encodeURIComponent(id)}`, {
+    body,
+    prefer: 'return=representation',
+  });
+  const row = rows[0];
+  if (!row) throw new DbError('mentors contact update returned no row', 500, rows);
   return toMentor(row);
 }
 

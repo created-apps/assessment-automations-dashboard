@@ -214,6 +214,15 @@ export const config = {
    * mentor's phone/email and to link them into user_group_memberships.
    * Optional: unset and those side-effects are skipped (with a warning).
    */
+  /**
+   * The daily first-class chase. It never gives up on its own -- the family is
+   * asked until SYNC has a meeting -- but Slack is told once the group has
+   * been asked for this many days, so a group nobody is booking surfaces.
+   */
+  firstClass: {
+    escalateAfterDays: num('FIRST_CLASS_ESCALATE_AFTER_DAYS', 7),
+  },
+
   sync: {
     url: syncUrl,
     serviceKey: syncKey,
@@ -249,6 +258,10 @@ export const config = {
     sheetSyncCron: optional('SHEET_SYNC_CRON') || '*/5 * * * *',
     /** Retrying the SYNC accounts of mentors added while SYNC was down. */
     mentorSyncCron: optional('MENTOR_SYNC_CRON') || '*/15 * * * *',
+    /** Watching for an assigned mentor to join, so the intro can be sent. */
+    mentorJoinCron: optional('MENTOR_JOIN_CRON') || '*/5 * * * *',
+    /** The morning ask about the first class. Server time, which is UTC. */
+    firstClassCron: optional('FIRST_CLASS_CRON') || '0 10 * * *',
     /**
      * Draining the per-case action queues. Every minute: the runner sends at
      * most one action per case per tick, so the real pacing dial is

@@ -94,15 +94,28 @@ export function MentorDialog({
       }
 
       const actor = await authorizeSend()
-      await addMentor(
+      const result = await addMentor(
         groupCase.id,
         mentor.name,
         variant !== DEFAULT_VARIANT ? variant : undefined,
         actor,
       )
-      toast.success("Mentor introduced", {
-        description: `${mentor.name} was introduced to ${groupCase.group_name}.`,
-      })
+
+      // The introduction now waits for the mentor to be in the group. When it
+      // is held, saying "introduced" would be a lie -- the family has heard
+      // nothing yet, and the five-minute job is what eventually sends it.
+      const held = Boolean(
+        (result.action?.detail as { held?: boolean } | null | undefined)?.held,
+      )
+      if (held) {
+        toast.success("Mentor assigned, introduction held", {
+          description: `${mentor.name} has been sent the group link. The introduction goes out once they join ${groupCase.group_name}.`,
+        })
+      } else {
+        toast.success("Mentor introduced", {
+          description: `${mentor.name} was introduced to ${groupCase.group_name}.`,
+        })
+      }
       onOpenChange(false)
       onDone?.()
     } catch (err) {

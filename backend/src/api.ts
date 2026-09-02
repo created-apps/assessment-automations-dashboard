@@ -47,6 +47,15 @@ function toApiCase(c: db.GroupCase) {
     stage: c.stage,
     mentor_name: c.mentorName,
     mentor_intro_sent_at: iso(c.mentorIntroSentAt),
+    // The introduction that is written but not sent, and since when -- this is
+    // the only place a mentor who never joined the group becomes visible.
+    pending_mentor_name: c.pendingMentorName,
+    pending_mentor_since: iso(c.pendingMentorSince),
+    mentor_joined_at: iso(c.mentorJoinedAt),
+    first_class_confirmed_at: iso(c.firstClassConfirmedAt),
+    first_class_confirmed_reason: c.firstClassConfirmedReason,
+    first_class_prompt_count: c.firstClassPromptCount,
+    first_class_prompted_at: iso(c.firstClassPromptedAt),
     last_nudged_at: iso(c.lastNudgedAt),
     nudge_count: c.nudgeCount,
     created_at: c.createdAt.toISOString(),

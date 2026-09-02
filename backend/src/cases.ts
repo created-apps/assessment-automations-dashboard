@@ -391,72 +391,6 @@ function execute(groupCase: GroupCase, action: ActionInput): Promise<Executed> {
   }
 }
 
-async function addMentor(
-  groupCase: GroupCase,
-  action: Extract<ActionInput, { kind: 'ADD_MENTOR' }>
-): Promise<Executed> {
-  const match = findMentor(action.mentor);
-
-  if (match.status === 'none') {
-    throw new Rejected(
-      `No mentor in the directory matches \u201c${action.mentor}\u201d.`,
-      { suggestions: match.candidates.map((c) => c.item.name) }
-    );
-  }
-  if (match.status === 'ambiguous') {
-    throw new Rejected(
-      `\u201c${action.mentor}\u201d could be any of several mentors.`,
-      { suggestions: match.candidates.map((c) => c.item.name) }
-    );
-  }
-
-  const mentor = match.best!.item;
-  const intro = introFor(mentor, action.variant);
-
-  await periskope.sendMessage(
-    groupCase.chatId,
-    templates.mentorIntroduction(intro)
-  );
-
-  // Resolve the mentor on SYNC before the case is stamped, so the id lands
-  // with the rest of the assignment. Everything downstream (the SYNC
-  // membership, the mentor's Drive access, the COSMIC mentor match) reads that
-  // id rather than re-matching this name against SYNC's spelling of it.
-  const resolved = await resolveOnSync(mentor);
-
-  const updated = await db.updateCase(groupCase.id, {
-    stage: 'MENTOR_ASSIGNED',
-    mentorName: mentor.name,
-    mentorRequestedName: action.mentor,
-    mentorIntroSentAt: new Date(),
-    mentorSyncUserId: resolved.mentor?.id ?? null,
-  });
-
-  // Side-effects that follow the introduction: DM the group link to the
-  // mentor, link them on SYNC, and record mentor details in the sheet. These
-  // are best-effort -- the introduction has already gone out, so a failure here
-  // is reported (in the action detail and to Slack) but does not fail the
-  // action or undo the send.
-  const warnings = await afterMentorIntroduced(updated, mentor.name, resolved);
-
-  return {
-    updated,
-    detail: {
-      mentor: mentor.name,
-      requested: action.mentor,
-      score: match.best!.score,
-      variant: action.variant ?? null,
-      ...(warnings.length ? { warnings } : {}),
-    },
-  };
-}
-
-/**
- * After a mentor is introduced: (1) DM the group invite link to the mentor's
- * personal WhatsApp, (2) link the mentor into the SYNC group, (3) write the
- * mentor's name/email/phone into the intake sheet. Never throws -- collects and
- * returns human-readable warnings for whatever couldn't be done.
- */
 export interface SyncResolution {
   mentor: sync.ResolvedMentor | null;
   /** Why it couldn't be resolved, if it couldn't. */
@@ -509,7 +443,217 @@ async function resolveOnSync(mentor: Mentor): Promise<SyncResolution> {
   }
 }
 
-async function afterMentorIntroduced(
+/**
+ * The mentor's number, for deciding whether they are in the group.
+ *
+ * Our directory first, SYNC second. The directory is what the dashboard edits
+ * and what the phone backfill filled in, so it is the copy a human would
+ * correct; SYNC's is the fallback for a mentor we hold no number for.
+ */
+function mentorPhoneDigits(mentor: Mentor, resolved: SyncResolution): string {
+  return sync.phoneDigits(mentor.phone ?? '') || sync.phoneDigits(resolved.mentor?.phone ?? '');
+}
+
+/** Is this number in the group's WhatsApp member list right now? */
+async function mentorIsInGroup(chatId: string, digits: string): Promise<boolean> {
+  const members = await periskope.getChatMemberPhones(chatId);
+  return members.includes(digits);
+}
+
+/**
+ * Send the introduction into the group and mark the case assigned.
+ *
+ * Shared by the immediate path (the mentor was already in the group when they
+ * were picked) and by the five-minute job that catches them joining later, so
+ * a family gets the same message either way and the case lands in the same
+ * state.
+ */
+export async function deliverMentorIntro(
+  groupCase: GroupCase,
+  mentor: Mentor,
+  variant: string | undefined,
+  requestedName: string,
+  syncUserId: string | null
+): Promise<GroupCase> {
+  await periskope.sendMessage(
+    groupCase.chatId,
+    templates.mentorIntroduction(introFor(mentor, variant))
+  );
+
+  return db.updateCase(groupCase.id, {
+    stage: 'MENTOR_ASSIGNED',
+    mentorName: mentor.name,
+    mentorRequestedName: requestedName,
+    mentorIntroSentAt: new Date(),
+    mentorSyncUserId: syncUserId,
+    // The wait is over; clear it so the five-minute job stops looking at this
+    // case and the dashboard stops showing it as held.
+    pendingMentorName: null,
+    pendingMentorVariant: null,
+    pendingMentorSince: null,
+  });
+}
+
+async function addMentor(
+  groupCase: GroupCase,
+  action: Extract<ActionInput, { kind: 'ADD_MENTOR' }>
+): Promise<Executed> {
+  const match = findMentor(action.mentor);
+
+  if (match.status === 'none') {
+    throw new Rejected(
+      `No mentor in the directory matches \u201c${action.mentor}\u201d.`,
+      { suggestions: match.candidates.map((c) => c.item.name) }
+    );
+  }
+  if (match.status === 'ambiguous') {
+    throw new Rejected(
+      `\u201c${action.mentor}\u201d could be any of several mentors.`,
+      { suggestions: match.candidates.map((c) => c.item.name) }
+    );
+  }
+
+  const mentor = match.best!.item;
+
+  // Resolve the mentor on SYNC first. This used to happen after the
+  // introduction had gone out; it has to come first now, because everything
+  // that gets the mentor *into* the group -- the invite DM, the SYNC
+  // membership -- is what the introduction is now waiting on.
+  const resolved = await resolveOnSync(mentor);
+  const syncUserId = resolved.mentor?.id ?? null;
+
+  // Invite the mentor and link them on SYNC straight away, whether or not the
+  // introduction can be sent yet. Without this the group would wait for a
+  // mentor who was never told the group existed.
+  const warnings = await afterMentorAssigned(groupCase, mentor.name, resolved);
+
+  const digits = mentorPhoneDigits(mentor, resolved);
+
+  // No number anywhere means the question "are they in the group?" cannot be
+  // asked. Falling back to sending the introduction is the behaviour this
+  // service had before the gate existed, so a missing number is never worse
+  // than it used to be -- but Slack is told, because it is fixable.
+  if (!digits) {
+    warnings.push(
+      `${mentor.name} has no phone number in the directory or on SYNC, so it could not be ` +
+        'checked whether they joined the group -- the introduction was sent immediately.'
+    );
+    await reportMentorWarnings(groupCase, warnings);
+    const updated = await deliverMentorIntro(
+      groupCase, mentor, action.variant, action.mentor, syncUserId
+    );
+    return {
+      updated,
+      detail: {
+        mentor: mentor.name,
+        requested: action.mentor,
+        score: match.best!.score,
+        variant: action.variant ?? null,
+        held: false,
+        reason: 'no phone number to check group membership with',
+        warnings,
+      },
+    };
+  }
+
+  let inGroup: boolean;
+  try {
+    inGroup = await mentorIsInGroup(groupCase.chatId, digits);
+  } catch (err) {
+    // Periskope being unreachable must not turn into an introduction sent to a
+    // group the mentor is not in. Hold it; the five-minute job retries.
+    inGroup = false;
+    warnings.push(`Could not read the group's members (${message(err)}) -- the introduction is held and will retry.`);
+  }
+
+  await reportMentorWarnings(groupCase, warnings);
+
+  if (inGroup) {
+    const updated = await deliverMentorIntro(
+      groupCase, mentor, action.variant, action.mentor, syncUserId
+    );
+    return {
+      updated,
+      detail: {
+        mentor: mentor.name,
+        requested: action.mentor,
+        score: match.best!.score,
+        variant: action.variant ?? null,
+        held: false,
+        ...(warnings.length ? { warnings } : {}),
+      },
+    };
+  }
+
+  // Park it. mentor_name is stamped so the dashboard can show who this group is
+  // waiting on, but mentor_intro_sent_at stays null -- nothing downstream may
+  // treat this as an introduced mentor until the message has actually gone.
+  const updated = await db.updateCase(groupCase.id, {
+    stage: 'AWAITING_MENTOR_JOIN',
+    mentorName: mentor.name,
+    mentorRequestedName: action.mentor,
+    mentorSyncUserId: syncUserId,
+    pendingMentorName: mentor.name,
+    pendingMentorVariant: action.variant ?? null,
+    pendingMentorSince: new Date(),
+  });
+
+  console.log(
+    `[case ${groupCase.id}] ${mentor.name} is not in ${groupCase.groupName} yet -- introduction held`
+  );
+
+  return {
+    updated,
+    detail: {
+      mentor: mentor.name,
+      requested: action.mentor,
+      score: match.best!.score,
+      variant: action.variant ?? null,
+      held: true,
+      reason: 'waiting for the mentor to join the group',
+      ...(warnings.length ? { warnings } : {}),
+    },
+  };
+}
+
+/**
+ * Post any side-effect warnings into Slack, once, if there are any.
+ *
+ * Split out of the side-effects themselves because they now run *before* the
+ * introduction rather than after it, so the wording can no longer claim the
+ * family has already heard from the mentor.
+ */
+async function reportMentorWarnings(
+  groupCase: GroupCase,
+  warnings: string[]
+): Promise<void> {
+  if (warnings.length === 0) return;
+  console.warn(`[case ${groupCase.id}] mentor side-effects:`, warnings);
+  try {
+    await slack.postMessage({
+      text:
+        `:warning: Mentor assigned to *${groupCase.groupName}*, but some follow-ups need attention:\n` +
+        warnings.map((w) => `• ${w}`).join('\n'),
+      ...(groupCase.slackChannel && groupCase.slackThreadTs
+        ? { channel: groupCase.slackChannel, threadTs: groupCase.slackThreadTs }
+        : {}),
+    });
+  } catch {
+    // Slack is best-effort; the warnings are already in the action detail.
+  }
+}
+
+/**
+ * Everything that has to happen the moment a mentor is picked: get them the
+ * group link and link them on SYNC.
+ *
+ * These used to run after the introduction. They now run before it, because
+ * the introduction waits for the mentor to be in the group and this is what
+ * puts them in a position to join. Best-effort, as before: a failure is
+ * reported rather than thrown, so a mentor who cannot be DM'd is still
+ * assigned and can still be added by hand.
+ */
+async function afterMentorAssigned(
   groupCase: GroupCase,
   mentorName: string,
   resolution: SyncResolution
@@ -572,19 +716,6 @@ async function afterMentorIntroduced(
   //     }
   //   }
   // }
-
-  if (warnings.length) {
-    console.warn(`[case ${groupCase.id}] mentor side-effects:`, warnings);
-    try {
-      await slack.postMessage({
-        text:
-          `:warning: Mentor introduced for *${groupCase.groupName}*, but some follow-ups need attention:\n` +
-          warnings.map((w) => `• ${w}`).join('\n'),
-      });
-    } catch {
-      // Slack is best-effort too; the warnings are already in the action detail.
-    }
-  }
 
   return warnings;
 }

@@ -40,6 +40,7 @@ const CHIPS: { key: Filter; label: string }[] = [
   { key: "AWAITING_JOIN", label: STAGE_LABELS.AWAITING_JOIN },
   { key: "NEW", label: STAGE_LABELS.NEW },
   { key: "IN_PROGRESS", label: STAGE_LABELS.IN_PROGRESS },
+  { key: "AWAITING_MENTOR_JOIN", label: STAGE_LABELS.AWAITING_MENTOR_JOIN },
   { key: "MENTOR_ASSIGNED", label: STAGE_LABELS.MENTOR_ASSIGNED },
   { key: "ABANDONED", label: STAGE_LABELS.ABANDONED },
 ]

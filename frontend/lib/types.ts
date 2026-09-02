@@ -3,6 +3,8 @@ export type Stage =
   | "AWAITING_JOIN"
   | "NEW"
   | "IN_PROGRESS"
+  /** Mentor picked and invited, but not in the group yet -- intro is held. */
+  | "AWAITING_MENTOR_JOIN"
   | "MENTOR_ASSIGNED"
   | "ABANDONED"
 
@@ -23,6 +25,15 @@ export interface GroupCase {
   stage: Stage
   mentor_name: string | null
   mentor_intro_sent_at: string | null
+  /** Introduction written but not sent: the mentor isn't in the group yet. */
+  pending_mentor_name: string | null
+  pending_mentor_since: string | null
+  mentor_joined_at: string | null
+  /** Set once SYNC has a meeting for the group; ends the first-class chase. */
+  first_class_confirmed_at: string | null
+  first_class_confirmed_reason: string | null
+  first_class_prompt_count: number
+  first_class_prompted_at: string | null
   last_nudged_at: string | null
   nudge_count: number
   created_at: string

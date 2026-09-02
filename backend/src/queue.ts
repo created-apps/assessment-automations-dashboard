@@ -99,6 +99,18 @@ async function runOneCase(caseId: string, summary: QueueSummary): Promise<void> 
   // a person. Nothing behind it may overtake it.
   if (queue.some((a) => a.status === 'FAILED')) return;
 
+  // Same rule for a held mentor introduction. ADD_MENTOR now invites the
+  // mentor and waits for them to join before the introduction goes out, and
+  // the queue is ordered because the order matters -- an assessment must not
+  // reach the family ahead of the introduction it was queued behind. The
+  // five-minute job clears this by sending the introduction.
+  const groupCase = await db.findCaseById(caseId);
+  if (!groupCase) throw new Error(`case ${caseId} vanished`);
+  if (groupCase.pendingMentorName) {
+    summary.waiting += 1;
+    return;
+  }
+
   const next = queue.find((a) => a.status === 'QUEUED');
   if (!next) return;
 
@@ -111,9 +123,6 @@ async function runOneCase(caseId: string, summary: QueueSummary): Promise<void> 
   // row, we get nothing back and leave it alone.
   const claimed = await db.claimQueuedAction(next.id, next.attempts);
   if (!claimed) return;
-
-  const groupCase = await db.findCaseById(caseId);
-  if (!groupCase) throw new Error(`case ${caseId} vanished`);
 
   try {
     const result = await performAction({

@@ -66,6 +66,7 @@ export const STAGE_LABELS: Record<Stage, string> = {
   AWAITING_JOIN: "Awaiting join",
   NEW: "New",
   IN_PROGRESS: "In progress",
+  AWAITING_MENTOR_JOIN: "Awaiting mentor join",
   MENTOR_ASSIGNED: "Mentor assigned",
   ABANDONED: "Abandoned",
 }
