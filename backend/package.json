@@ -13,6 +13,7 @@
     "mentors:phones": "tsx src/mentor-phones-once.ts",
     "mentor-join": "tsx src/mentor-join-once.ts",
     "first-class": "tsx src/first-class-once.ts",
+    "check-mentions": "tsx src/check-mentions.ts",
     "check-assessments": "tsx src/check-assessments-once.ts",
     "typecheck": "tsc --noEmit"
   },

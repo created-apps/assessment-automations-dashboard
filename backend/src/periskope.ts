@@ -95,10 +95,57 @@ export async function getChatMemberPhones(chatId: string): Promise<string[]> {
   return [...phones];
 }
 
-export function sendMessage(chatId: string, message: string) {
-  return call<{ queue_id?: string; [key: string]: unknown }>(
+/** The JID form a WhatsApp contact is addressed by: `919537851844@c.us`. */
+export function contactJid(digits: string): string {
+  const bare = (digits ?? '').replace(/\D/g, '');
+  return bare ? `${bare}@c.us` : '';
+}
+
+export interface SendOptions {
+  /**
+   * Contacts to @-mention, as JIDs (`919537851844@c.us`).
+   *
+   * WhatsApp renders a mention by matching this list against `@<digits>` in
+   * the body, so the message text must contain the bare number for each JID
+   * here -- a mention with no matching token in the text shows nothing, and a
+   * token with no JID here is just literal text.
+   *
+   * Undocumented but working. Periskope's published OpenAPI schema for
+   * /message/send lists chat_id, message, media, reply_to, poll and options
+   * only -- no mentions field -- but the server does honour it: a test send
+   * came back with both JIDs on the stored message's mentioned_ids, and the
+   * tags rendered as contact names in the group. Re-check with
+   * `npm run check-mentions` if a Periskope upgrade ever breaks the tagging.
+   */
+  mentions?: string[];
+}
+
+export function sendMessage(
+  chatId: string,
+  message: string,
+  options: SendOptions = {}
+) {
+  const mentions = (options.mentions ?? []).filter(Boolean);
+  return call<{ queue_id?: string; message_id?: string; unique_id?: string; [key: string]: unknown }>(
     'POST',
     '/message/send',
-    { chat_id: chatId, message }
+    {
+      chat_id: chatId,
+      message,
+      ...(mentions.length ? { mentions } : {}),
+    }
+  );
+}
+
+/**
+ * One message as Periskope stored it.
+ *
+ * Only used to check what actually happened to a send -- `mentioned_ids` is
+ * how a real mention shows up on the stored record.
+ */
+export function getMessage(messageId: string) {
+  return call<{ mentioned_ids?: string[] | null; body?: string | null; [key: string]: unknown }>(
+    'GET',
+    `/message/${encodeURIComponent(messageId)}`
   );
 }

@@ -162,13 +162,28 @@ async function runOne(
     return false;
   }
 
-  await periskope.sendMessage(
-    groupCase.chatId,
-    templates.firstClassPrompt({
-      studentName: groupCase.studentName,
-      mentorName: groupCase.mentorName,
-    })
-  );
+  // Only mention numbers that are actually in the group. WhatsApp shows a
+  // mention of a non-member as the raw digits rather than a name, so anyone
+  // who isn't in the group is named instead -- which reads correctly whether
+  // or not they are there.
+  const members = new Set(await periskope.getChatMemberPhones(groupCase.chatId));
+  const studentPhone = sync.phoneDigits(groupCase.studentPhone ?? '');
+  const mentorPhone = await assignedMentorPhone(groupCase);
+
+  const prompt = templates.firstClassPrompt({
+    student: {
+      name: groupCase.studentName,
+      phone: members.has(studentPhone) ? studentPhone : null,
+    },
+    mentor: {
+      name: groupCase.mentorName,
+      phone: members.has(mentorPhone) ? mentorPhone : null,
+    },
+  });
+
+  await periskope.sendMessage(groupCase.chatId, prompt.message, {
+    mentions: prompt.mentions,
+  });
 
   const now = new Date();
   const startedAt = groupCase.firstClassFirstPromptedAt ?? now;

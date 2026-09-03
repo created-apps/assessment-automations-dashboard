@@ -58,23 +58,50 @@ export function assessmentCompleted(input: {
 }
 
 /** Sent privately to the mentor after they're introduced, with the group link. */
+/** Someone a message can address: mentioned by number when we have one. */
+export interface Taggable {
+  name: string;
+  /** Digits only. Absent means they can only be named, not mentioned. */
+  phone?: string | null;
+}
+
+/** A message and the contacts WhatsApp should turn into real mentions. */
+export interface TaggedMessage {
+  message: string;
+  /** JIDs, for periskope.sendMessage's `mentions`. */
+  mentions: string[];
+}
+
 /**
- * The morning ask about the first class.
+ * The token that addresses one person, and the JID that makes it a mention.
  *
- * The "@" names are plain text, not WhatsApp mentions: Periskope's send
- * endpoint takes chat_id, message, media, poll, reply_to and options only --
- * there is no mentions field, so a real (tappable, notifying) mention cannot
- * be produced from this API. It still reads as addressed to both people, which
- * is what the message is for.
+ * WhatsApp only renders a mention where the body holds `@<digits>` and the
+ * send carries the matching JID, so the number -- not the name -- is what goes
+ * in the text. It is displayed as the contact's name in the client, so nobody
+ * sees the digits. Without a number there is nothing to mention, and the name
+ * is written instead so the message still reads as addressed to them.
+ */
+function tag(person: Taggable): { token: string; jid: string } {
+  const digits = (person.phone ?? '').replace(/\D/g, '');
+  if (!digits) return { token: `@${person.name}`, jid: '' };
+  return { token: `@${digits}`, jid: `${digits}@c.us` };
+}
+
+/**
+ * The morning ask about the first class, addressed to the student and mentor.
  */
 export function firstClassPrompt(input: {
-  studentName: string;
-  mentorName: string;
-}): string {
-  return (
-    `@${input.studentName} @${input.mentorName} ` +
-    'when would you like to schedule your first class?'
-  );
+  student: Taggable;
+  mentor: Taggable;
+}): TaggedMessage {
+  const student = tag(input.student);
+  const mentor = tag(input.mentor);
+  return {
+    message:
+      `${student.token} ${mentor.token} ` +
+      'when would you like to schedule your first class?',
+    mentions: [student.jid, mentor.jid].filter(Boolean),
+  };
 }
 
 export function mentorGroupInvite(groupName: string, inviteLink: string): string {
