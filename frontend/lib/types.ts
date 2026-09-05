@@ -34,6 +34,14 @@ export interface GroupCase {
   first_class_confirmed_reason: string | null
   first_class_prompt_count: number
   first_class_prompted_at: string | null
+  /**
+   * Set when someone stopped this project from the dashboard. Every
+   * automation across all three services skips a stopped case, and no action
+   * can be sent for it. There is no way to undo it from here.
+   */
+  operations_stopped_at: string | null
+  operations_stopped_by: string | null
+  operations_stopped_reason: string | null
   last_nudged_at: string | null
   nudge_count: number
   created_at: string

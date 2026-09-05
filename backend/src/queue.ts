@@ -106,6 +106,13 @@ async function runOneCase(caseId: string, summary: QueueSummary): Promise<void> 
   // five-minute job clears this by sending the introduction.
   const groupCase = await db.findCaseById(caseId);
   if (!groupCase) throw new Error(`case ${caseId} vanished`);
+
+  // Stopped between listCasesWithQueue and now. The working set already
+  // excludes stopped cases, so this only catches that race -- but the race is
+  // exactly the one that matters, because the other side of it is a message
+  // arriving at a family somebody has just told us to stop messaging.
+  if (groupCase.operationsStoppedAt) return;
+
   if (groupCase.pendingMentorName) {
     summary.waiting += 1;
     return;

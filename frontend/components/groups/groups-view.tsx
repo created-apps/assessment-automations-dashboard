@@ -64,7 +64,7 @@ function TableSkeleton() {
 }
 
 export function GroupsView() {
-  const { data, isLoading } = useCases()
+  const { data, isLoading, mutate } = useCases()
   const [filter, setFilter] = React.useState<Filter>("ALL")
   const [query, setQuery] = React.useState("")
   const [sort, setSort] = React.useState<Sort>("newest")
@@ -193,7 +193,7 @@ export function GroupsView() {
           <p className="text-xs text-muted-foreground">
             {rows.length} {rows.length === 1 ? "group" : "groups"}
           </p>
-          <GroupsTable rows={rows} />
+          <GroupsTable rows={rows} onChanged={() => void mutate()} />
         </div>
       )}
     </div>

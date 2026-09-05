@@ -56,6 +56,11 @@ function toApiCase(c: db.GroupCase) {
     first_class_confirmed_reason: c.firstClassConfirmedReason,
     first_class_prompt_count: c.firstClassPromptCount,
     first_class_prompted_at: iso(c.firstClassPromptedAt),
+    // The kill switch, so the dashboard can show a stopped group as stopped
+    // and hide the buttons that would now be refused anyway.
+    operations_stopped_at: iso(c.operationsStoppedAt),
+    operations_stopped_by: c.operationsStoppedBy,
+    operations_stopped_reason: c.operationsStoppedReason,
     last_nudged_at: iso(c.lastNudgedAt),
     nudge_count: c.nudgeCount,
     created_at: c.createdAt.toISOString(),
@@ -554,6 +559,86 @@ api.delete('/cases/:id/queue/:queuedId', async (req, res) => {
         .json({ error: 'that action is not queued any more -- it may already have been sent' });
     }
     return res.status(204).end();
+  } catch (err) {
+    return fail(res, err);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// The stop switch
+// ---------------------------------------------------------------------------
+
+const stopSchema = z.object({
+  actor: z.string().trim().min(1).optional(),
+  reason: z.string().trim().max(2000).optional(),
+});
+
+/**
+ * POST /api/cases/:id/stop
+ *
+ * Stop every automation for one group, permanently.
+ *
+ * After this: the mentor nudge, the action queue, the mentor-join check, the
+ * first-class chase, the assessment-completion announcements and the sheet
+ * sync all skip this case; the Stage 5 setup cron in the project-setup service
+ * skips it; the join/welcome check in the group-creation service skips its
+ * group; and every send from the dashboard is refused. Anything still queued
+ * is cancelled here, so it cannot be resumed by accident either.
+ *
+ * There is deliberately no way to undo it from the dashboard. Stopping is a
+ * decision about a real family, and an un-stop button would make it a toggle
+ * somebody could flip back without meaning to -- clearing the column by hand
+ * in Supabase is the deliberate act that reversing it should be.
+ *
+ * Calling it twice is not an error: the second call reports the first stop.
+ */
+api.post('/cases/:id/stop', async (req, res) => {
+  const parsed = stopSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'Invalid request body' });
+  }
+
+  try {
+    const groupCase = await db.findCaseById(req.params.id);
+    if (!groupCase) return res.status(404).json({ error: 'case not found' });
+
+    const stopped = await db.stopCase(
+      groupCase.id,
+      parsed.data.actor ?? null,
+      parsed.data.reason ?? null
+    );
+
+    // Already stopped: say so and change nothing, so the original actor and
+    // timestamp survive.
+    if (!stopped) {
+      const current = (await db.findCaseById(groupCase.id)) ?? groupCase;
+      return res.json({
+        case: toApiCase(current),
+        cancelled: 0,
+        already_stopped: true,
+      });
+    }
+
+    // Now that nothing will pick the case up again, clear the queue. A failure
+    // here leaves rows QUEUED, which is untidy but harmless: the runner's
+    // working set no longer contains this case.
+    let cancelled = 0;
+    try {
+      cancelled = await db.cancelQueuedActionsForCase(stopped.id);
+    } catch (err) {
+      console.error(`[${stopped.id}] stopped, but clearing the queue failed:`, err);
+    }
+
+    console.log(
+      `[${stopped.id}] OPERATIONS STOPPED by ${parsed.data.actor ?? 'unknown'} ` +
+        `(${stopped.groupName}), ${cancelled} queued action(s) cancelled`
+    );
+
+    return res.json({
+      case: toApiCase(stopped),
+      cancelled,
+      already_stopped: false,
+    });
   } catch (err) {
     return fail(res, err);
   }

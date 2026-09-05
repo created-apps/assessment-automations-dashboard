@@ -28,6 +28,10 @@ import { ContactsPanel } from "@/components/detail/contacts-panel"
 import { QueuePanel } from "@/components/detail/queue-panel"
 import { Timeline } from "@/components/detail/timeline"
 import { ActionsBar } from "@/components/detail/actions-bar"
+import {
+  StopOperationsButton,
+  StoppedNotice,
+} from "@/components/stop-operations"
 import { useCase, useCaseActions, useMentors } from "@/hooks/use-data"
 import { formatDate, relativeTime } from "@/lib/format"
 
@@ -115,7 +119,14 @@ export function DetailView({ id }: { id: string }) {
               {groupCase.mentor_name ? ` · Mentor: ${groupCase.mentor_name}` : ""}
             </p>
           </div>
-          <StageBadge stage={groupCase.stage} className="mt-1" />
+          <div className="mt-1 flex items-center gap-2">
+            <StageBadge stage={groupCase.stage} />
+            <StopOperationsButton
+              groupCase={groupCase}
+              size="sm"
+              onDone={refresh}
+            />
+          </div>
         </div>
 
         {meta.length > 0 ? (
@@ -138,6 +149,10 @@ export function DetailView({ id }: { id: string }) {
 
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="flex flex-col gap-6 lg:col-span-2">
+          {groupCase.operations_stopped_at ? (
+            <StoppedNotice groupCase={groupCase} />
+          ) : null}
+
           <ActionsBar
             groupCase={groupCase}
             mentors={mentors ?? []}

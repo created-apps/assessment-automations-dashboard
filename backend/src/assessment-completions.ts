@@ -83,6 +83,9 @@ export async function runAssessmentCompletions(): Promise<CompletionSummary> {
     const groupCase = cases.get(a.caseId);
     const email = (groupCase?.studentEmail ?? '').trim().toLowerCase();
     if (!groupCase || !email) continue;
+    // Stopped cases are filtered here rather than in the query: the working
+    // set comes from case_actions, which knows nothing about the case.
+    if (groupCase.operationsStoppedAt) continue;
 
     summary.checked += 1;
     if (!emails.has(email)) continue;

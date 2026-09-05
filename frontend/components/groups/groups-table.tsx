@@ -18,6 +18,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import { StageBadge } from "@/components/stage-badge"
+import { StopOperationsButton } from "@/components/stop-operations"
 import { ACTION_SHORT, daysSince, relativeTime } from "@/lib/format"
 import type { CaseSummary } from "@/lib/types"
 
@@ -82,7 +83,14 @@ function Mentor({ row }: { row: CaseSummary }) {
   )
 }
 
-export function GroupsTable({ rows }: { rows: CaseSummary[] }) {
+export function GroupsTable({
+  rows,
+  onChanged,
+}: {
+  rows: CaseSummary[]
+  /** Re-fetch the list after a row is stopped, so it repaints as stopped. */
+  onChanged?: () => void
+}) {
   const router = useRouter()
 
   function open(id: string) {
@@ -102,12 +110,16 @@ export function GroupsTable({ rows }: { rows: CaseSummary[] }) {
               <TableHead className="min-w-44">Last action</TableHead>
               <TableHead className="w-24">Open for</TableHead>
               <TableHead className="w-20 text-right">Nudges</TableHead>
+              <TableHead className="w-32" />
               <TableHead className="w-10" />
             </TableRow>
           </TableHeader>
           <TableBody>
             {rows.map((row) => {
-              const isNew = row.stage === "NEW"
+              const stopped = Boolean(row.operations_stopped_at)
+              // A stopped row is not "new" any more, whatever its stage says:
+              // the amber flag means someone should act on it, and nobody can.
+              const isNew = row.stage === "NEW" && !stopped
               return (
                 <TableRow
                   key={row.id}
@@ -115,6 +127,7 @@ export function GroupsTable({ rows }: { rows: CaseSummary[] }) {
                   className={cn(
                     "group cursor-pointer",
                     isNew && "bg-amber-500/[0.04] hover:bg-amber-500/[0.08]",
+                    stopped && "opacity-60",
                   )}
                 >
                   <TableCell
@@ -144,6 +157,14 @@ export function GroupsTable({ rows }: { rows: CaseSummary[] }) {
                   <TableCell className="text-right text-sm">
                     <Nudges row={row} />
                   </TableCell>
+                  <TableCell className="text-right">
+                    <StopOperationsButton
+                      groupCase={row}
+                      size="sm"
+                      label="Stop"
+                      onDone={onChanged}
+                    />
+                  </TableCell>
                   <TableCell className="text-muted-foreground/50">
                     <ChevronRightIcon className="size-4 transition-transform group-hover:translate-x-0.5" />
                   </TableCell>
@@ -157,15 +178,26 @@ export function GroupsTable({ rows }: { rows: CaseSummary[] }) {
       {/* Mobile cards */}
       <div className="flex flex-col gap-3 md:hidden">
         {rows.map((row) => {
-          const isNew = row.stage === "NEW"
+          const stopped = Boolean(row.operations_stopped_at)
+          const isNew = row.stage === "NEW" && !stopped
           return (
-            <button
+            // A div, not a button: the stop control is itself a button, and a
+            // button inside a button is invalid and swallows the inner click.
+            <div
               key={row.id}
-              type="button"
+              role="link"
+              tabIndex={0}
               onClick={() => open(row.id)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault()
+                  open(row.id)
+                }
+              }}
               className={cn(
-                "flex flex-col gap-3 rounded-xl border border-border bg-card p-4 text-left transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50",
+                "flex cursor-pointer flex-col gap-3 rounded-xl border border-border bg-card p-4 text-left transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50",
                 isNew && "border-l-2 border-l-amber-500",
+                stopped && "opacity-60",
               )}
             >
               <div className="flex items-start justify-between gap-2">
@@ -195,7 +227,14 @@ export function GroupsTable({ rows }: { rows: CaseSummary[] }) {
                   <Nudges row={row} />
                 </div>
               </div>
-            </button>
+              <div className="flex justify-end">
+                <StopOperationsButton
+                  groupCase={row}
+                  size="sm"
+                  onDone={onChanged}
+                />
+              </div>
+            </div>
           )
         })}
       </div>

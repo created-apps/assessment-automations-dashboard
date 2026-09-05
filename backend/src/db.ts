@@ -115,6 +115,13 @@ export interface GroupCase {
   firstClassPromptedAt: Date | null;
   firstClassPromptCount: number;
   firstClassEscalatedAt: Date | null;
+  /**
+   * Set when someone stopped this case from the dashboard. While it is set,
+   * every automation leaves the case alone and no action can be sent.
+   */
+  operationsStoppedAt: Date | null;
+  operationsStoppedBy: string | null;
+  operationsStoppedReason: string | null;
   /** Null until handover opens the thread (see AWAITING_JOIN). */
   slackChannel: string | null;
   slackThreadTs: string | null;
@@ -172,6 +179,9 @@ interface GroupCaseRow {
   first_class_prompted_at: string | null;
   first_class_prompt_count: number;
   first_class_escalated_at: string | null;
+  operations_stopped_at: string | null;
+  operations_stopped_by: string | null;
+  operations_stopped_reason: string | null;
   slack_channel: string | null;
   slack_thread_ts: string | null;
   last_nudged_at: string | null;
@@ -238,6 +248,9 @@ function toCase(row: GroupCaseRow): GroupCase {
     firstClassPromptedAt: date(row.first_class_prompted_at),
     firstClassPromptCount: row.first_class_prompt_count ?? 0,
     firstClassEscalatedAt: date(row.first_class_escalated_at),
+    operationsStoppedAt: date(row.operations_stopped_at),
+    operationsStoppedBy: row.operations_stopped_by ?? null,
+    operationsStoppedReason: row.operations_stopped_reason ?? null,
     slackChannel: row.slack_channel,
     slackThreadTs: row.slack_thread_ts,
     lastNudgedAt: date(row.last_nudged_at),
@@ -265,6 +278,17 @@ function toAction(row: CaseActionRow): CaseAction {
 }
 
 const CASE_COLUMNS = '*';
+
+/**
+ * The kill switch, as a PostgREST filter.
+ *
+ * Every query that feeds an automation its working set carries this, so a
+ * stopped case is never even fetched. It is deliberately not applied to the
+ * single-case reads (findCaseById and friends) or to listCases: the dashboard
+ * still has to show a stopped case, and a job that has already been handed one
+ * checks `operationsStoppedAt` itself.
+ */
+const LIVE_ONLY = ['operations_stopped_at', 'is.null'] as const;
 
 export async function findCaseByChatId(
   chatId: string
@@ -294,6 +318,7 @@ export async function listCasesByStage(stage: CaseStage): Promise<GroupCase[]> {
   const params = new URLSearchParams({
     select: CASE_COLUMNS,
     stage: `eq.${stage}`,
+    [LIVE_ONLY[0]]: LIVE_ONLY[1],
     order: 'created_at.asc',
   });
   const rows = await call<GroupCaseRow[]>('GET', `/group_cases?${params}`);
@@ -311,6 +336,7 @@ export async function listCasesAwaitingMentorJoin(): Promise<GroupCase[]> {
   const params = new URLSearchParams({
     select: CASE_COLUMNS,
     pending_mentor_name: 'not.is.null',
+    [LIVE_ONLY[0]]: LIVE_ONLY[1],
     order: 'pending_mentor_since.asc',
   });
   const rows = await call<GroupCaseRow[]>('GET', `/group_cases?${params}`);
@@ -330,6 +356,7 @@ export async function listCasesAwaitingFirstClass(): Promise<GroupCase[]> {
     stage: 'eq.MENTOR_ASSIGNED',
     first_class_confirmed_at: 'is.null',
     supabase_group_id: 'not.is.null',
+    [LIVE_ONLY[0]]: LIVE_ONLY[1],
     order: 'created_at.asc',
   });
   const rows = await call<GroupCaseRow[]>('GET', `/group_cases?${params}`);
@@ -464,6 +491,9 @@ export interface CasePatch {
   firstClassPromptedAt?: Date | null;
   firstClassPromptCount?: number;
   firstClassEscalatedAt?: Date | null;
+  operationsStoppedAt?: Date | null;
+  operationsStoppedBy?: string | null;
+  operationsStoppedReason?: string | null;
   /** Written once, when handover opens the thread for a pre-join case. */
   slackChannel?: string | null;
   slackThreadTs?: string | null;
@@ -513,6 +543,9 @@ export async function updateCase(
   set('first_class_prompted_at', patch.firstClassPromptedAt);
   set('first_class_prompt_count', patch.firstClassPromptCount);
   set('first_class_escalated_at', patch.firstClassEscalatedAt);
+  set('operations_stopped_at', patch.operationsStoppedAt);
+  set('operations_stopped_by', patch.operationsStoppedBy);
+  set('operations_stopped_reason', patch.operationsStoppedReason);
   set('slack_channel', patch.slackChannel);
   set('slack_thread_ts', patch.slackThreadTs);
   set('last_nudged_at', patch.lastNudgedAt);
@@ -862,6 +895,7 @@ export async function listCasesForSheetSync(): Promise<SheetSyncCase[]> {
     select:
       'id,sheet_row,group_name,stage,mentor_name,mentor_intro_sent_at,project_setups(*)',
     sheet_row: 'not.is.null',
+    [LIVE_ONLY[0]]: LIVE_ONLY[1],
   });
   const rows = await call<
     {
@@ -1211,6 +1245,7 @@ export async function listCasesWithQueue(): Promise<string[]> {
   params.set('select', 'case_id,group_cases!inner(stage)');
   params.set('status', 'eq.QUEUED');
   params.set('group_cases.stage', 'neq.AWAITING_JOIN');
+  params.set('group_cases.operations_stopped_at', 'is.null');
   params.set('order', 'position.asc');
 
   const rows = await call<{ case_id: string }[]>('GET', `/queued_actions?${params}`);
@@ -1289,6 +1324,63 @@ export async function cancelQueuedAction(caseId: string, id: string): Promise<bo
     { body: { status: 'CANCELLED', updated_at: new Date().toISOString() }, prefer: 'return=representation' }
   );
   return rows.length > 0;
+}
+
+/**
+ * Cancel everything still queued for a case, in one request.
+ *
+ * Used by the stop switch. SENT and FAILED rows are left alone: they are the
+ * record of what happened, and rewriting them would erase it. Returns how many
+ * rows were actually cancelled.
+ */
+export async function cancelQueuedActionsForCase(caseId: string): Promise<number> {
+  const rows = await call<QueuedActionRow[]>(
+    'PATCH',
+    `/queued_actions?case_id=eq.${encodeURIComponent(caseId)}&status=eq.QUEUED`,
+    {
+      body: { status: 'CANCELLED', updated_at: new Date().toISOString() },
+      prefer: 'return=representation',
+    }
+  );
+  return rows.length;
+}
+
+// ---------------------------------------------------------------------------
+// The stop switch
+// ---------------------------------------------------------------------------
+
+/**
+ * Stop every automation for one case, for good.
+ *
+ * The timestamp is written under `operations_stopped_at is null`, which makes
+ * it a compare-and-set: a case that is already stopped comes back with no row,
+ * and the caller reports the original stop rather than overwriting who stopped
+ * it and when. Returns null in that case.
+ *
+ * Cancelling the queue is a separate step and is done by the caller *after*
+ * this succeeds, so the flag -- the thing every job reads -- is set first. If
+ * the cancel then fails, the queue runner still skips the case, because its
+ * working set already excludes it.
+ */
+export async function stopCase(
+  id: string,
+  by: string | null,
+  reason: string | null
+): Promise<GroupCase | null> {
+  const rows = await call<GroupCaseRow[]>(
+    'PATCH',
+    `/group_cases?id=eq.${encodeURIComponent(id)}&operations_stopped_at=is.null`,
+    {
+      body: {
+        operations_stopped_at: new Date().toISOString(),
+        operations_stopped_by: by,
+        operations_stopped_reason: reason,
+        updated_at: new Date().toISOString(),
+      },
+      prefer: 'return=representation',
+    }
+  );
+  return rows[0] ? toCase(rows[0]) : null;
 }
 
 // ---------------------------------------------------------------------------

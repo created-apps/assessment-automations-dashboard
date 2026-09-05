@@ -16,6 +16,7 @@ import { MeetingDialog } from "@/components/actions/meeting-dialog"
 import { MentorDialog } from "@/components/actions/mentor-dialog"
 import { ProjectSetupDialog } from "@/components/actions/project-setup-dialog"
 import { useCanSendActions } from "@/components/auth/auth-provider"
+import { StoppedBadge } from "@/components/stop-operations"
 import type { GroupCase, Mentor } from "@/lib/types"
 
 type ActionId = "cs" | "prototyping" | "meeting" | "mentor" | "project-setup" | null
@@ -31,7 +32,11 @@ export function ActionsBar({
 }) {
   const [active, setActive] = React.useState<ActionId>(null)
   const close = () => setActive(null)
-  const canSend = useCanSendActions()
+  // Stopping is permanent, so the buttons go dead rather than failing on the
+  // server. The server refuses these anyway -- this is so nobody composes a
+  // message for a family that was never going to receive it.
+  const stopped = Boolean(groupCase.operations_stopped_at)
+  const canSend = useCanSendActions() && !stopped
 
   const actions = [
     {
@@ -71,7 +76,9 @@ export function ActionsBar({
       <CardHeader>
         <CardTitle className="flex items-center justify-between gap-2 text-base">
           Actions
-          {!canSend ? (
+          {stopped ? (
+            <StoppedBadge />
+          ) : !canSend ? (
             <Badge variant="secondary" className="font-normal">
               Read-only
             </Badge>
@@ -108,7 +115,9 @@ export function ActionsBar({
                 {button}
               </TooltipTrigger>
               <TooltipContent>
-                Read-only access — ask an admin to send this
+                {stopped
+                  ? "Operations are stopped for this project"
+                  : "Read-only access — ask an admin to send this"}
               </TooltipContent>
             </Tooltip>
           )

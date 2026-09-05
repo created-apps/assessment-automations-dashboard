@@ -170,6 +170,14 @@ export async function openCase(input: IntakeInput): Promise<OpenCaseResult> {
       return { case: refreshed, created: false };
     }
 
+    // Stopped before the family joined. Refreshing their details above is
+    // harmless bookkeeping, but opening the thread is not: the thread is what
+    // the whole follow-up hangs off, and this case is not to be followed up.
+    if (refreshed.operationsStoppedAt) {
+      console.log(`[${refreshed.id}] operations stopped -- no thread opened`);
+      return { case: refreshed, created: false };
+    }
+
     // Registered before the family joined: this is its first real handover, so
     // the thread is opened now and the case leaves AWAITING_JOIN. Posting
     // before the patch means a failure here leaves the case exactly as it was,
@@ -286,6 +294,24 @@ export async function performAction(
   input: PerformInput
 ): Promise<PerformResult> {
   const { case: groupCase, action } = input;
+
+  // The kill switch. Checked before the action row is claimed so a stopped
+  // case gains no audit row for a message that was never going to be sent --
+  // and checked here rather than only in the API, because the queue runner
+  // calls straight into this too.
+  //
+  // The case is re-read rather than trusted from the caller: it may have been
+  // stopped between the read that produced it and this call.
+  const live = (await db.findCaseById(groupCase.id)) ?? groupCase;
+  if (live.operationsStoppedAt) {
+    throw new Rejected(
+      `Operations are stopped for ${live.groupName}. Nothing can be sent to this group.`,
+      {
+        operations_stopped_at: live.operationsStoppedAt.toISOString(),
+        operations_stopped_by: live.operationsStoppedBy,
+      }
+    );
+  }
 
   const claimed = await db.claimAction({
     caseId: groupCase.id,

@@ -244,6 +244,28 @@ export function saveProjectSetup(
   )
 }
 
+export interface StopResult {
+  case: GroupCase
+  cancelled: number
+  already_stopped: boolean
+}
+
+/**
+ * Stop every automation for one project, permanently.
+ *
+ * No idempotency key: the server keys on the case already being stopped, so a
+ * double-click reports the first stop rather than overwriting it.
+ */
+export function stopOperations(
+  caseId: string,
+  reason?: string,
+): Promise<StopResult> {
+  return request<StopResult>(`/api/cases/${encodeURIComponent(caseId)}/stop`, {
+    method: "POST",
+    body: JSON.stringify(reason ? { reason } : {}),
+  })
+}
+
 // ---------------------------------------------------------------------------
 // Queued actions
 //

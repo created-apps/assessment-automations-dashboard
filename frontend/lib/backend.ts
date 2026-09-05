@@ -197,6 +197,28 @@ export function saveProjectSetup(
   )
 }
 
+export interface StopResult {
+  case: GroupCase
+  /** Queued actions cancelled as part of stopping. */
+  cancelled: number
+  /** True when it was already stopped, so nothing changed. */
+  already_stopped: boolean
+}
+
+/**
+ * Stop every automation for one group, permanently. See the backend's
+ * POST /api/cases/:id/stop for exactly what that covers.
+ */
+export function stopOperations(
+  caseId: string,
+  body: { actor?: string; reason?: string },
+): Promise<StopResult> {
+  return call<StopResult>(`/api/cases/${encodeURIComponent(caseId)}/stop`, {
+    method: "POST",
+    body,
+  })
+}
+
 export type QueueBody =
   | { kind: "ADD_MENTOR"; mentor: string; variant?: string; actor?: string }
   | { kind: "CS_ASSESSMENT"; deadline_days: number; actor?: string }
