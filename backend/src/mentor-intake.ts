@@ -1,6 +1,13 @@
 import * as db from './db';
 import * as sync from './sync';
-import { findMentor, findMentorByEmail, type Mentor } from './mentors';
+import * as slack from './slack';
+import * as templates from './templates';
+import {
+  findMentorByEmail,
+  findMentorFuzzy,
+  sameMentorName,
+  type Mentor,
+} from './mentors';
 import type { SheetRowValues } from './sheets';
 
 /**
@@ -38,6 +45,8 @@ export interface MentorIntakeSummary {
   queued: number;
   /** Rows left for a later tick: no directory entry, or SYNC doesn't know them. */
   unresolved: number;
+  /** Unresolvable mentors reported in Slack on this pass. */
+  alerted: number;
   errors: number;
 }
 
@@ -45,6 +54,7 @@ export const emptySummary = (): MentorIntakeSummary => ({
   considered: 0,
   queued: 0,
   unresolved: 0,
+  alerted: 0,
   errors: 0,
 });
 
@@ -76,35 +86,106 @@ function alreadyHandled(
   );
 }
 
-/**
- * The directory entry to introduce, or null with the reason it can't be found.
- *
- * Email is tried first because it is copied rather than typed; the fuzzy name
- * match is the same one a dashboard user gets, so a sheet reading "Aash Sha"
- * still finds "Aash Shah".
- */
-function directoryEntry(
-  row: SheetRowValues
-): { mentor: Mentor } | { mentor: null; reason: string } {
-  const byEmail = findMentorByEmail(row.mentorEmail);
-  if (byEmail) return { mentor: byEmail };
+/** A directory lookup that failed, with everything Slack needs to say so. */
+interface NotFound {
+  mentor: null;
+  reason: string;
+  suggestions: string[];
+}
 
-  const match = findMentor(row.mentorName);
-  if (match.status === 'matched') return { mentor: match.best!.item };
-
-  const suggestions = match.candidates
+/** The three nearest directory names, for a "did you mean". */
+function nearest(match: { candidates: { item: Mentor; score: number }[] }): string[] {
+  return match.candidates
     .filter((c) => c.score > 0)
     .map((c) => c.item.name)
     .slice(0, 3);
-  const nearest = suggestions.length ? ` (nearest: ${suggestions.join(', ')})` : '';
+}
+
+/**
+ * The directory entry to introduce, or null with the reason it can't be found.
+ *
+ * The two columns are held to deliberately different standards, because they
+ * are produced in different ways:
+ *
+ *  - **Email is exact.** It is copied, not typed, so a near miss is not a
+ *    typo -- it is a different address, and an address either belongs to a
+ *    mentor or it does not. Nothing is fuzzy here and nothing ever should be:
+ *    "close" email matching is how a family gets introduced to the wrong
+ *    person with the audit trail saying it was deliberate.
+ *
+ *  - **Name is fuzzy.** It is typed into a spreadsheet cell by hand, so it
+ *    carries misspellings, shortenings and honorifics. findMentorFuzzy still
+ *    refuses to guess below the confidence threshold or between two close
+ *    candidates.
+ *
+ * When both resolve, they must resolve to the same mentor. A row whose email
+ * says one person and whose name says another is not a lookup problem to be
+ * broken in the email's favour -- it is a wrong row, and only a human knows
+ * which half of it is the mistake.
+ */
+interface Found {
+  mentor: Mentor;
+  /**
+   * How it was resolved. 'fuzzy-name' is the only one that involved a
+   * judgement call, and is the only one the thread is told about.
+   */
+  via: 'email' | 'exact-name' | 'fuzzy-name';
+}
+
+function directoryEntry(row: SheetRowValues): Found | NotFound {
+  const email = (row.mentorEmail ?? '').trim();
+  const name = (row.mentorName ?? '').trim();
+
+  const byEmail = email ? findMentorByEmail(email) : null;
+  const byName = name ? findMentorFuzzy(name) : null;
+  const named = byName?.status === 'matched' ? byName.best!.item : null;
+
+  if (byEmail) {
+    if (named && !sameMentorName(named.name, byEmail.name)) {
+      return {
+        mentor: null,
+        suggestions: [byEmail.name, named.name],
+        reason:
+          `the email belongs to ${byEmail.name} while the name reads as ` +
+          `${named.name} -- two different mentors, so this cannot say which ` +
+          `was meant`,
+      };
+    }
+    return { mentor: byEmail, via: 'email' };
+  }
+
+  // No email hit. Say so explicitly when one was given: "the name didn't
+  // match" is a different problem from "the address isn't one we hold", and
+  // whoever fixes the row needs to know which.
+  const emailNote = email
+    ? `no mentor in the directory has the email ${email}`
+    : '';
+
+  if (named) {
+    return {
+      mentor: named,
+      via: sameMentorName(named.name, name) ? 'exact-name' : 'fuzzy-name',
+    };
+  }
+
+  if (!name) {
+    return {
+      mentor: null,
+      suggestions: [],
+      reason: emailNote || 'the row names no mentor',
+    };
+  }
+
+  const suggestions = byName ? nearest(byName) : [];
+  const nameNote =
+    byName?.status === 'ambiguous'
+      ? `"${name}" is too close to more than one mentor to choose between them`
+      : `no mentor in the directory is named "${name}"`;
+
   return {
     mentor: null,
-    reason:
-      match.status === 'ambiguous'
-        ? `"${row.mentorName}" could be any of several mentors in the directory${nearest}`
-        : `no mentor in the directory matches "${row.mentorName}"` +
-          (row.mentorEmail ? ` or ${row.mentorEmail}` : '') +
-          nearest,
+    suggestions,
+    reason: emailNote ? `${emailNote}, and ${nameNote}` : nameNote,
   };
 }
 
@@ -162,6 +243,76 @@ async function resolveOnSync(
 }
 
 /**
+ * What this row said that could not be resolved, normalised.
+ *
+ * Stored on the case so the same bad value is reported once rather than every
+ * hour. Both columns go into it: correcting the name while leaving a wrong
+ * email is still a row that needs reporting, and it would look identical to a
+ * key built from either column alone.
+ */
+function alertKey(row: SheetRowValues): string {
+  const name = (row.mentorName ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
+  const email = (row.mentorEmail ?? '').trim().toLowerCase();
+  return `${name}|${email}`;
+}
+
+/**
+ * Say in Slack that this row's mentor cannot be found.
+ *
+ * In the case's own thread when it has one. A case still at AWAITING_JOIN has
+ * no thread yet -- the thread is opened by the handover, after the family
+ * joins -- so those fall back to the channel, where the message still names
+ * the group and the sheet row.
+ *
+ * Posts before recording the key, so a Slack outage means the row is reported
+ * on the next pass rather than silently marked as reported. Never throws: an
+ * unreachable Slack must not cost this row its retry, or the rows behind it
+ * their project-details sync.
+ */
+async function reportUnresolved(
+  entry: db.SheetSyncCase,
+  row: SheetRowValues,
+  found: NotFound,
+  summary: MentorIntakeSummary
+): Promise<void> {
+  const key = alertKey(row);
+  // Same bad value as last time: already said, and saying it again hourly is
+  // how the alert stops being read.
+  if (entry.mentorAlertKey === key) return;
+
+  try {
+    await slack.postMessage({
+      text: templates.mentorNotFound({
+        caseId: entry.caseId,
+        groupName: entry.groupName,
+        studentName: entry.studentName,
+        sheetRow: entry.sheetRow,
+        mentorName: (row.mentorName ?? '').trim(),
+        mentorEmail: (row.mentorEmail ?? '').trim(),
+        reason: found.reason,
+        suggestions: found.suggestions,
+      }),
+      ...(entry.slackChannel && entry.slackThreadTs
+        ? { channel: entry.slackChannel, threadTs: entry.slackThreadTs }
+        : {}),
+    });
+
+    await db.updateCase(entry.caseId, {
+      mentorAlertKey: key,
+      mentorAlertAt: new Date(),
+    });
+    // So a second row in the same pass doesn't post the same thing again.
+    entry.mentorAlertKey = key;
+    summary.alerted += 1;
+  } catch (err) {
+    console.error(
+      `[${entry.caseId}] could not report the unresolved mentor in Slack:`,
+      err
+    );
+  }
+}
+
+/**
  * Consider one sheet row's mentor, and queue the introduction if everything
  * lines up.
  *
@@ -191,6 +342,7 @@ export async function considerRow(
     if (!found.mentor) {
       summary.unresolved += 1;
       console.warn(`${label}: ${found.reason} -- not queued`);
+      await reportUnresolved(entry, row, found, summary);
       return;
     }
     const mentor = found.mentor;
@@ -220,6 +372,38 @@ export async function considerRow(
     // Same run, later row, same case: don't let it queue a second one.
     mentorQueued.add(entry.caseId);
     summary.queued += 1;
+
+    // The row was reported at some point and has since been fixed. Clearing
+    // the key means a future break is reported afresh rather than silently
+    // matching a complaint from weeks ago.
+    if (entry.mentorAlertKey) {
+      await db.updateCase(entry.caseId, {
+        mentorAlertKey: null,
+        mentorAlertAt: null,
+      });
+    }
+
+    // A judgement call was made about who this row meant. Say so while the
+    // introduction is still only queued. Best-effort: the introduction is
+    // already lined up and a Slack outage must not undo that.
+    if (found.via === 'fuzzy-name') {
+      await slack
+        .postMessage({
+          text: templates.mentorMatchedLoosely({
+            caseId: entry.caseId,
+            groupName: entry.groupName,
+            typed: (row.mentorName ?? '').trim(),
+            matched: mentor.name,
+          }),
+          ...(entry.slackChannel && entry.slackThreadTs
+            ? { channel: entry.slackChannel, threadTs: entry.slackThreadTs }
+            : {}),
+        })
+        .catch((err) =>
+          console.error(`[${entry.caseId}] could not report the loose match:`, err)
+        );
+    }
+
     console.log(
       `${label}: introduction for ${mentor.name} queued at position ` +
         `${queued.position} for ${entry.groupName}` +

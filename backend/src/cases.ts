@@ -369,8 +369,8 @@ export function renderPreview(
       const match = findMentor(action.mentor);
       if (match.status !== 'matched') {
         throw new Rejected(
-          `No single mentor matches “${action.mentor}”.`,
-          { suggestions: match.candidates.map((c) => c.item.name) }
+          `No mentor in the directory is named “${action.mentor}”. ` +
+            'The name has to match a directory entry exactly.'
         );
       }
       return templates.mentorIntroduction(
@@ -527,14 +527,17 @@ async function addMentor(
   const match = findMentor(action.mentor);
 
   if (match.status === 'none') {
+    // Exact match only -- see findMentor. A name that is merely close is a
+    // typo to be fixed, not a mentor to be guessed at.
     throw new Rejected(
-      `No mentor in the directory matches \u201c${action.mentor}\u201d.`,
-      { suggestions: match.candidates.map((c) => c.item.name) }
+      `No mentor in the directory is named \u201c${action.mentor}\u201d. ` +
+        'The name has to match a directory entry exactly.'
     );
   }
   if (match.status === 'ambiguous') {
     throw new Rejected(
-      `\u201c${action.mentor}\u201d could be any of several mentors.`,
+      `The directory holds more than one mentor named ` +
+        `\u201c${action.mentor}\u201d, so this cannot say which.`,
       { suggestions: match.candidates.map((c) => c.item.name) }
     );
   }
@@ -573,7 +576,6 @@ async function addMentor(
       detail: {
         mentor: mentor.name,
         requested: action.mentor,
-        score: match.best!.score,
         variant: action.variant ?? null,
         held: false,
         reason: 'no phone number to check group membership with',
@@ -603,7 +605,6 @@ async function addMentor(
       detail: {
         mentor: mentor.name,
         requested: action.mentor,
-        score: match.best!.score,
         variant: action.variant ?? null,
         held: false,
         ...(warnings.length ? { warnings } : {}),
@@ -633,7 +634,6 @@ async function addMentor(
     detail: {
       mentor: mentor.name,
       requested: action.mentor,
-      score: match.best!.score,
       variant: action.variant ?? null,
       held: true,
       reason: 'waiting for the mentor to join the group',

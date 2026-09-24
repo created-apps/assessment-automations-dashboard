@@ -59,7 +59,7 @@ export function formatPhone(raw: string | null | undefined): string {
   // Indian numbers: +91 XXXXX XXXXX
   const m = digits.match(/^\+?91?(\d{5})(\d{5})$/)
   if (m) return `+91 ${m[1]} ${m[2]}`
-  return raw
+  return digits.startsWith("+") ? digits : `+${digits}`
 }
 
 export const STAGE_LABELS: Record<Stage, string> = {

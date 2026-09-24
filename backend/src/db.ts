@@ -116,6 +116,13 @@ export interface GroupCase {
   firstClassPromptCount: number;
   firstClassEscalatedAt: Date | null;
   /**
+   * What the sheet's mentor columns last said that could not be resolved, and
+   * when that was reported in Slack. Null once a row resolves. See
+   * sql/011_mentor_alert.sql.
+   */
+  mentorAlertKey: string | null;
+  mentorAlertAt: Date | null;
+  /**
    * Set when someone stopped this case from the dashboard. While it is set,
    * every automation leaves the case alone and no action can be sent.
    */
@@ -179,6 +186,8 @@ interface GroupCaseRow {
   first_class_prompted_at: string | null;
   first_class_prompt_count: number;
   first_class_escalated_at: string | null;
+  mentor_alert_key: string | null;
+  mentor_alert_at: string | null;
   operations_stopped_at: string | null;
   operations_stopped_by: string | null;
   operations_stopped_reason: string | null;
@@ -248,6 +257,8 @@ function toCase(row: GroupCaseRow): GroupCase {
     firstClassPromptedAt: date(row.first_class_prompted_at),
     firstClassPromptCount: row.first_class_prompt_count ?? 0,
     firstClassEscalatedAt: date(row.first_class_escalated_at),
+    mentorAlertKey: row.mentor_alert_key ?? null,
+    mentorAlertAt: date(row.mentor_alert_at),
     operationsStoppedAt: date(row.operations_stopped_at),
     operationsStoppedBy: row.operations_stopped_by ?? null,
     operationsStoppedReason: row.operations_stopped_reason ?? null,
@@ -491,6 +502,8 @@ export interface CasePatch {
   firstClassPromptedAt?: Date | null;
   firstClassPromptCount?: number;
   firstClassEscalatedAt?: Date | null;
+  mentorAlertKey?: string | null;
+  mentorAlertAt?: Date | null;
   operationsStoppedAt?: Date | null;
   operationsStoppedBy?: string | null;
   operationsStoppedReason?: string | null;
@@ -543,6 +556,8 @@ export async function updateCase(
   set('first_class_prompted_at', patch.firstClassPromptedAt);
   set('first_class_prompt_count', patch.firstClassPromptCount);
   set('first_class_escalated_at', patch.firstClassEscalatedAt);
+  set('mentor_alert_key', patch.mentorAlertKey);
+  set('mentor_alert_at', patch.mentorAlertAt);
   set('operations_stopped_at', patch.operationsStoppedAt);
   set('operations_stopped_by', patch.operationsStoppedBy);
   set('operations_stopped_reason', patch.operationsStoppedReason);
@@ -876,10 +891,16 @@ export interface SheetSyncCase {
   caseId: string;
   sheetRow: number;
   groupName: string;
+  studentName: string;
   /** The three things that say whether a mentor has already been dealt with. */
   stage: CaseStage;
   mentorName: string | null;
   mentorIntroSentAt: Date | null;
+  /** Where to report an unresolvable mentor. Null before the family joins. */
+  slackChannel: string | null;
+  slackThreadTs: string | null;
+  /** What we last complained about for this row, so we complain only once. */
+  mentorAlertKey: string | null;
   /** Null when the case has no project_setups row yet. */
   setup: ProjectSetup | null;
 }
@@ -893,7 +914,8 @@ export interface SheetSyncCase {
 export async function listCasesForSheetSync(): Promise<SheetSyncCase[]> {
   const params = new URLSearchParams({
     select:
-      'id,sheet_row,group_name,stage,mentor_name,mentor_intro_sent_at,project_setups(*)',
+      'id,sheet_row,group_name,student_name,stage,mentor_name,mentor_intro_sent_at,' +
+      'slack_channel,slack_thread_ts,mentor_alert_key,project_setups(*)',
     sheet_row: 'not.is.null',
     [LIVE_ONLY[0]]: LIVE_ONLY[1],
   });
@@ -902,9 +924,13 @@ export async function listCasesForSheetSync(): Promise<SheetSyncCase[]> {
       id: string;
       sheet_row: number;
       group_name: string;
+      student_name: string;
       stage: CaseStage;
       mentor_name: string | null;
       mentor_intro_sent_at: string | null;
+      slack_channel: string | null;
+      slack_thread_ts: string | null;
+      mentor_alert_key: string | null;
       project_setups: ProjectSetupRow | ProjectSetupRow[] | null;
     }[]
   >('GET', `/group_cases?${params}`);
@@ -919,9 +945,13 @@ export async function listCasesForSheetSync(): Promise<SheetSyncCase[]> {
       caseId: row.id,
       sheetRow: row.sheet_row,
       groupName: row.group_name,
+      studentName: row.student_name,
       stage: row.stage,
       mentorName: row.mentor_name,
       mentorIntroSentAt: date(row.mentor_intro_sent_at),
+      slackChannel: row.slack_channel,
+      slackThreadTs: row.slack_thread_ts,
+      mentorAlertKey: row.mentor_alert_key ?? null,
       setup: embedded ? toProjectSetup(embedded) : null,
     };
   });
