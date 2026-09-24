@@ -111,11 +111,21 @@ export function createMentor(body: {
   })
 }
 
-/** Change a mentor's introduction. Admin-only (enforced server-side). */
-export function updateMentorIntro(name: string, intro: string): Promise<Mentor> {
+export interface MentorEdit {
+  intro?: string
+  /** null clears the address; omitted leaves it alone. */
+  email?: string | null
+  phone?: string | null
+}
+
+/**
+ * Change a mentor's introduction, email or phone. Admin-only (enforced
+ * server-side). Send only the fields being changed.
+ */
+export function updateMentor(name: string, body: MentorEdit): Promise<Mentor> {
   return request<Mentor>(`/api/mentors/${encodeURIComponent(name)}`, {
     method: "PATCH",
-    body: JSON.stringify({ intro }),
+    body: JSON.stringify(body),
   })
 }
 

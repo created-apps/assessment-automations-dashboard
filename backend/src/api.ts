@@ -254,26 +254,40 @@ api.post('/mentors', async (req, res) => {
   }
 });
 
-const mentorIntroSchema = z.object({
-  intro: z.string().trim().min(1).max(8000),
-  actor: z.string().trim().min(1).optional(),
-});
+const mentorEditSchema = z
+  .object({
+    intro: z.string().trim().min(1).max(8000).optional(),
+    /**
+     * Nullable so an address entered by mistake can be removed, not just
+     * replaced. Absent means "leave it alone"; null means "clear it".
+     */
+    email: z.string().trim().email().max(320).nullable().optional(),
+    phone: z.string().trim().min(3).max(40).nullable().optional(),
+    actor: z.string().trim().min(1).optional(),
+  })
+  .refine(
+    (b) => b.intro !== undefined || b.email !== undefined || b.phone !== undefined,
+    'give at least one of intro, email or phone'
+  );
 
 /**
  * PATCH /api/mentors/:name
  *
- * Change a mentor's introduction -- the text sent verbatim when they are
- * introduced to a group.
+ * Change a mentor's introduction, email or phone. The name identifies them and
+ * is not editable: it is what every other part of the system matches them on.
  *
- * Seed mentors (data/mentors.json) have no row to update, so editing one writes
- * a row carrying their other fields across; allMentors() has a DB row override
- * a seed entry of the same name, so from then on the edited wording is what the
- * picker, the preview and the matcher all see. No SYNC account is created here:
- * rewording an introduction is not the same as adding a mentor, and the seed
- * entries have no phone number to key one on anyway.
+ * The email matters more than it looks. The intake sheet identifies a group's
+ * mentor by an exact email match against this column -- see directoryEntry in
+ * mentor-intake.ts -- so a mentor with no address here cannot be named from
+ * the sheet at all, and this is the only way to give them one.
+ *
+ * Seed mentors (data/mentors.json) have no row to update, so editing one
+ * writes a row carrying their other fields across; allMentors() has a DB row
+ * override a seed entry of the same name, so from then on the edited values
+ * are what the picker, the preview and the sheet lookup all see.
  */
 api.patch('/mentors/:name', async (req, res) => {
-  const parsed = mentorIntroSchema.safeParse(req.body);
+  const parsed = mentorEditSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({
       error: 'Invalid request body',
@@ -290,18 +304,53 @@ api.patch('/mentors/:name', async (req, res) => {
     return res.status(404).json({ error: `No mentor named "${req.params.name}".` });
   }
 
+  const { intro, email, phone, actor } = parsed.data;
+
+  // Two mentors sharing an address is worse than it sounds: findMentorByEmail
+  // treats a duplicate as no match rather than picking between them, so this
+  // would silently make BOTH of them unfindable from the intake sheet. Refuse
+  // it here, where there is somebody to tell.
+  if (email) {
+    const clash = allMentors().find(
+      (m) =>
+        (m.email ?? '').trim().toLowerCase() === email.trim().toLowerCase() &&
+        m.name.trim().toLowerCase() !== wanted
+    );
+    if (clash) {
+      return res.status(409).json({
+        error:
+          `${clash.name} already has the email ${email}. An address identifies ` +
+          `exactly one mentor, so it cannot be shared.`,
+      });
+    }
+  }
+
   try {
     const existing = await db.findDbMentorByName(current.name);
-    const mentor = existing
-      ? await db.updateMentorIntro(existing.id, parsed.data.intro)
-      : await db.insertMentor({
-          name: current.name,
-          intro: parsed.data.intro,
-          variants: current.variants ?? null,
-          email: current.email ?? null,
-          phone: current.phone ?? null,
-          createdBy: parsed.data.actor ?? null,
+
+    let mentor = existing;
+    if (!mentor) {
+      // First edit of a seed mentor: give them a row carrying what the seed
+      // holds, with this edit applied on top.
+      mentor = await db.insertMentor({
+        name: current.name,
+        intro: intro ?? current.intro,
+        variants: current.variants ?? null,
+        email: email !== undefined ? email : current.email ?? null,
+        phone: phone !== undefined ? phone : current.phone ?? null,
+        createdBy: actor ?? null,
+      });
+    } else {
+      if (intro !== undefined) {
+        mentor = await db.updateMentorIntro(mentor.id, intro);
+      }
+      if (email !== undefined || phone !== undefined) {
+        mentor = await db.updateMentorContact(mentor.id, {
+          ...(email !== undefined ? { email } : {}),
+          ...(phone !== undefined ? { phone } : {}),
         });
+      }
+    }
 
     await refreshMentors();
     return res.json({

@@ -236,34 +236,6 @@ export function mentorNotFound(input: {
   );
 }
 
-/**
- * The sheet's spelling did not match the directory exactly, and a judgement
- * call was made.
- *
- * Posted because the introduction is *queued*, not sent: it goes out after the
- * family joins, so there is usually a window in which a wrong guess can be
- * cancelled from the dashboard. A bare given name is the case worth catching
- * -- "Aashna" is a confident match for "Aash Shah" and also, quite possibly,
- * somebody else entirely -- and no confidence threshold can tell those apart.
- * A person reading the name can.
- */
-export function mentorMatchedLoosely(input: {
-  caseId: string;
-  groupName: string;
-  typed: string;
-  matched: string;
-}): string {
-  const link = caseLink(input.caseId);
-
-  return (
-    `Queued *${input.matched}*'s introduction for ${input.groupName}.\n` +
-    `The intake sheet said "${input.typed}", which isn't an exact directory ` +
-    `name, so it was matched to the closest one.\n` +
-    `If that's the wrong person, cancel it` +
-    (link ? ` before it sends: ${link}` : ' in the dashboard before it sends.')
-  );
-}
-
 export function nudgeGivenUp(c: CaseSummary, days: number): string {
   const link = caseLink(c.caseId ?? null);
 

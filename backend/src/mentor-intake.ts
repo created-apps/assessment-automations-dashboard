@@ -26,17 +26,20 @@ import type { SheetRowValues } from './sheets';
  *  - **The directory** (mentors.json + the `mentors` table) is where the
  *    introduction text lives. No entry means there is nothing to send, so the
  *    row is left alone until someone adds the mentor properly in the
- *    dashboard. Matched on email first, then by the same fuzzy name match the
- *    dashboard uses.
+ *    dashboard. Identified by the row's email, matched exactly; the name is
+ *    then fuzzy-matched only to check the row agrees with itself. See
+ *    directoryEntry for why the email has to come first.
  *
  *  - **SYNC** is what every step after the introduction points at: the group
  *    membership, the invite DM, the mentor's Drive access. A mentor SYNC does
  *    not know would get an introduction and nothing else, so that too waits --
  *    a later tick picks the row up once their account exists.
  *
- * Neither miss is an error worth waking anyone for: both are logged and the
- * row is simply reconsidered on the next pass. Nothing is written to say we
- * warned, so nothing has to be cleaned up when the sheet is fixed.
+ * The two misses are reported differently, because they are different kinds
+ * of problem. A directory miss is a wrong row: nothing will fix it on its own,
+ * so it is said once in the group's Slack thread and the row is left alone. A
+ * SYNC miss usually fixes itself -- the account backfill creates what is
+ * missing -- so it is logged and quietly retried on the next pass.
  */
 
 export interface MentorIntakeSummary {
@@ -93,14 +96,6 @@ interface NotFound {
   suggestions: string[];
 }
 
-/** The three nearest directory names, for a "did you mean". */
-function nearest(match: { candidates: { item: Mentor; score: number }[] }): string[] {
-  return match.candidates
-    .filter((c) => c.score > 0)
-    .map((c) => c.item.name)
-    .slice(0, 3);
-}
-
 /**
  * The directory entry to introduce, or null with the reason it can't be found.
  *
@@ -123,70 +118,71 @@ function nearest(match: { candidates: { item: Mentor; score: number }[] }): stri
  * broken in the email's favour -- it is a wrong row, and only a human knows
  * which half of it is the mistake.
  */
-interface Found {
-  mentor: Mentor;
-  /**
-   * How it was resolved. 'fuzzy-name' is the only one that involved a
-   * judgement call, and is the only one the thread is told about.
-   */
-  via: 'email' | 'exact-name' | 'fuzzy-name';
-}
-
-function directoryEntry(row: SheetRowValues): Found | NotFound {
+/**
+ * The directory entry to introduce, or null with the reason it can't be found.
+ *
+ * **The email is a gate, not a first attempt.** A mentor is identified by an
+ * address the directory actually holds, exactly -- case and surrounding space
+ * ignored, because every mail system ignores those, and nothing else. A row
+ * with no email, or with an address we do not hold, names nobody: it is
+ * reported and left alone, never resolved from the name instead.
+ *
+ * That ordering is the whole safety property, and it is worth being explicit
+ * about why, because the gentler version looks reasonable and is not. Scoring
+ * a hand-typed name finds real typos -- "Aash Sha" is obviously "Aash Shah" --
+ * but it cannot tell a typo from a different person who happens to be spelt
+ * similarly. In this directory "Aashna" scores 0.87 against "Aash Shah", the
+ * same confidence that makes "Harshit Sir" -> "Harshit Rai Verma" correct. No
+ * threshold separates those two, so a name on its own must never decide who a
+ * family is introduced to. An email can, because it is copied rather than
+ * typed.
+ *
+ * The name still matters, once the gate is passed: it is fuzzy-matched purely
+ * to check the two halves of the row agree. Tolerant on purpose -- a typo in
+ * the name must not block a row whose email is right -- but a name that
+ * clearly resolves to somebody *else* means the row itself is wrong, and only
+ * a person knows which half of it is the mistake.
+ */
+function directoryEntry(row: SheetRowValues): { mentor: Mentor } | NotFound {
   const email = (row.mentorEmail ?? '').trim();
   const name = (row.mentorName ?? '').trim();
 
-  const byEmail = email ? findMentorByEmail(email) : null;
-  const byName = name ? findMentorFuzzy(name) : null;
-  const named = byName?.status === 'matched' ? byName.best!.item : null;
-
-  if (byEmail) {
-    if (named && !sameMentorName(named.name, byEmail.name)) {
-      return {
-        mentor: null,
-        suggestions: [byEmail.name, named.name],
-        reason:
-          `the email belongs to ${byEmail.name} while the name reads as ` +
-          `${named.name} -- two different mentors, so this cannot say which ` +
-          `was meant`,
-      };
-    }
-    return { mentor: byEmail, via: 'email' };
-  }
-
-  // No email hit. Say so explicitly when one was given: "the name didn't
-  // match" is a different problem from "the address isn't one we hold", and
-  // whoever fixes the row needs to know which.
-  const emailNote = email
-    ? `no mentor in the directory has the email ${email}`
-    : '';
-
-  if (named) {
-    return {
-      mentor: named,
-      via: sameMentorName(named.name, name) ? 'exact-name' : 'fuzzy-name',
-    };
-  }
-
-  if (!name) {
+  if (!email) {
     return {
       mentor: null,
       suggestions: [],
-      reason: emailNote || 'the row names no mentor',
+      reason: name
+        ? `the row gives no mentor email, and a name on its own is not enough ` +
+          `to identify a mentor`
+        : 'the row names no mentor',
     };
   }
 
-  const suggestions = byName ? nearest(byName) : [];
-  const nameNote =
-    byName?.status === 'ambiguous'
-      ? `"${name}" is too close to more than one mentor to choose between them`
-      : `no mentor in the directory is named "${name}"`;
+  const byEmail = findMentorByEmail(email);
+  if (!byEmail) {
+    return {
+      mentor: null,
+      suggestions: [],
+      reason: `no mentor in the directory has the email ${email}`,
+    };
+  }
 
-  return {
-    mentor: null,
-    suggestions,
-    reason: emailNote ? `${emailNote}, and ${nameNote}` : nameNote,
-  };
+  // The gate is passed. The name is now only asked whether it agrees.
+  const byName = name ? findMentorFuzzy(name) : null;
+  const named = byName?.status === 'matched' ? byName.best!.item : null;
+
+  if (named && !sameMentorName(named.name, byEmail.name)) {
+    return {
+      mentor: null,
+      suggestions: [byEmail.name, named.name],
+      reason:
+        `the email belongs to ${byEmail.name} while the name reads as ` +
+        `${named.name} -- two different mentors, so this cannot say which ` +
+        `was meant`,
+    };
+  }
+
+  return { mentor: byEmail };
 }
 
 /**
@@ -382,33 +378,6 @@ export async function considerRow(
         mentorAlertAt: null,
       });
     }
-
-    // A judgement call was made about who this row meant. Say so while the
-    // introduction is still only queued. Best-effort: the introduction is
-    // already lined up and a Slack outage must not undo that.
-    if (found.via === 'fuzzy-name') {
-      await slack
-        .postMessage({
-          text: templates.mentorMatchedLoosely({
-            caseId: entry.caseId,
-            groupName: entry.groupName,
-            typed: (row.mentorName ?? '').trim(),
-            matched: mentor.name,
-          }),
-          ...(entry.slackChannel && entry.slackThreadTs
-            ? { channel: entry.slackChannel, threadTs: entry.slackThreadTs }
-            : {}),
-        })
-        .catch((err) =>
-          console.error(`[${entry.caseId}] could not report the loose match:`, err)
-        );
-    }
-
-    console.log(
-      `${label}: introduction for ${mentor.name} queued at position ` +
-        `${queued.position} for ${entry.groupName}` +
-        (entry.stage === 'AWAITING_JOIN' ? ' (held until the welcome goes out)' : '')
-    );
   } catch (err) {
     summary.errors += 1;
     console.error(`${label}: mentor intake failed:`, err);

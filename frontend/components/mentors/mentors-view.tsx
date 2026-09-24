@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Pencil, Plus, SearchIcon, UsersRound } from "lucide-react"
+import { MailWarning, Pencil, Plus, SearchIcon, UsersRound } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
@@ -38,6 +38,12 @@ export function MentorsView() {
   const [editing, setEditing] = React.useState<Mentor | null>(null)
   const canManage = useCanSendActions()
 
+  // Mentors the intake sheet cannot name. The sheet identifies a mentor by an
+  // exact email match, so an entry without one is invisible to it however well
+  // its name is spelt -- worth surfacing as a job to do rather than leaving to
+  // be discovered as a Slack alert on somebody's group.
+  const missingEmail = (mentors ?? []).filter((m) => !(m.email ?? "").trim())
+
   const filtered = React.useMemo(() => {
     if (!mentors) return []
     const q = query.trim().toLowerCase()
@@ -65,6 +71,23 @@ export function MentorsView() {
           </Button>
         ) : null}
       </div>
+
+      {missingEmail.length > 0 ? (
+        <div className="flex items-start gap-3 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
+          <MailWarning
+            className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-500"
+            aria-hidden="true"
+          />
+          <p className="text-pretty text-sm leading-relaxed text-muted-foreground">
+            <span className="font-medium text-foreground">
+              {missingEmail.length} mentor{missingEmail.length === 1 ? " has" : "s have"} no
+              email
+            </span>{" "}
+            and cannot be named from the intake sheet, which identifies a mentor
+            by an exact email match. Add their addresses to line those rows up.
+          </p>
+        </div>
+      ) : null}
 
       <InputGroup className="max-w-sm">
         <InputGroupInput
@@ -149,6 +172,12 @@ function MentorCard({
                 ? `${variants.length + 1} intro variant${variants.length > 0 ? "s" : ""}`
                 : "1 intro"}
             </span>
+            {!(mentor.email ?? "").trim() ? (
+              <span className="mt-0.5 flex items-center gap-1 text-xs text-amber-600 dark:text-amber-500">
+                <MailWarning className="size-3" aria-hidden="true" />
+                No email — not nameable from the sheet
+              </span>
+            ) : null}
           </div>
           {onEdit ? (
             <Button
@@ -156,7 +185,7 @@ function MentorCard({
               size="icon"
               className="ml-auto"
               onClick={onEdit}
-              aria-label={`Edit ${mentor.name}'s introduction`}
+              aria-label={`Edit ${mentor.name}`}
             >
               <Pencil />
             </Button>

@@ -1,20 +1,30 @@
 import { NextResponse } from "next/server"
 import { z } from "zod"
 
-import { updateMentorIntro } from "@/lib/backend"
+import { updateMentor } from "@/lib/backend"
 import { backendFailure, requireAdmin } from "@/lib/route-helpers"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 
-const bodySchema = z.object({
-  intro: z.string().trim().min(1).max(8000),
-})
+const bodySchema = z
+  .object({
+    intro: z.string().trim().min(1).max(8000).optional(),
+    // Nullable so a wrong address can be removed, not only replaced.
+    email: z.string().trim().email().max(320).nullable().optional(),
+    phone: z.string().trim().min(3).max(40).nullable().optional(),
+  })
+  .refine(
+    (b) =>
+      b.intro !== undefined || b.email !== undefined || b.phone !== undefined,
+    { message: "Nothing to change." },
+  )
 
 /**
- * Edit a mentor's introduction. Admin-only, like adding one — it changes what
- * the whole team sends. The editor is taken from the session for the audit
- * trail on mentors that gain their first row through this edit.
+ * Edit a mentor's introduction, email or phone. Admin-only, like adding one —
+ * it changes what the whole team sends, and the email decides which mentor an
+ * intake sheet row resolves to. The editor is taken from the session for the
+ * audit trail on mentors that gain their first row through this edit.
  */
 export async function PATCH(
   req: Request,
@@ -47,8 +57,8 @@ export async function PATCH(
   }
 
   try {
-    const mentor = await updateMentorIntro(name, {
-      intro: parsed.data.intro,
+    const mentor = await updateMentor(name, {
+      ...parsed.data,
       actor: auth.user.name,
     })
     return NextResponse.json(mentor)

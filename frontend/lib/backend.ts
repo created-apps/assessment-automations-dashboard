@@ -119,10 +119,24 @@ export function createMentor(body: NewMentorBody): Promise<Mentor> {
   return call<Mentor>("/api/mentors", { method: "POST", body })
 }
 
-/** Change a mentor's introduction. The name identifies them; it is unchanged. */
-export function updateMentorIntro(
+export interface MentorEditBody {
+  intro?: string
+  /** null clears the address; omitted leaves it alone. */
+  email?: string | null
+  phone?: string | null
+  actor?: string
+}
+
+/**
+ * Change a mentor's introduction, email or phone. The name identifies them and
+ * is not editable.
+ *
+ * The email is what the intake sheet matches a group's mentor on, exactly, so
+ * this is the only way a mentor becomes nameable from the sheet.
+ */
+export function updateMentor(
   name: string,
-  body: { intro: string; actor?: string },
+  body: MentorEditBody,
 ): Promise<Mentor> {
   return call<Mentor>(`/api/mentors/${encodeURIComponent(name)}`, {
     method: "PATCH",
