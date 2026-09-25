@@ -92,15 +92,18 @@ function tag(person: Taggable): { token: string; jid: string } {
  */
 export function firstClassPrompt(input: {
   student: Taggable;
-  mentor: Taggable;
+  /**
+   * Omitted when the case has no mentor recorded. The question is addressed to
+   * the group either way -- who to book with is not what is being asked.
+   */
+  mentor?: Taggable | null;
 }): TaggedMessage {
   const student = tag(input.student);
-  const mentor = tag(input.mentor);
+  const mentor = input.mentor ? tag(input.mentor) : null;
+  const who = [student.token, mentor?.token].filter(Boolean).join(' ');
   return {
-    message:
-      `${student.token} ${mentor.token} ` +
-      'when would you like to schedule your first class?',
-    mentions: [student.jid, mentor.jid].filter(Boolean),
+    message: `${who} when would you like to schedule your first class?`,
+    mentions: [student.jid, ...(mentor ? [mentor.jid] : [])].filter(Boolean),
   };
 }
 

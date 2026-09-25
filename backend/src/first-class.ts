@@ -15,22 +15,24 @@ import { findMentor } from './mentors';
  * only honest signal that the question has been answered -- asking the family
  * to confirm in WhatsApp would just be a second thing to chase.
  *
- * The rules, in the order they are applied to a group's meetings:
+ * One rule, on the count alone:
  *
- *   - **none at all** -> ask.
- *   - **four or more** -> stop, and don't check whose they are. A group with
- *     that many meetings is plainly running; whatever the mentor history is,
- *     it is not something a morning message to the family will fix.
- *   - **one to three** -> check whose they are. SYNC's group_id is reused
- *     across a group's whole life, so a handful of meetings can belong to a
- *     previous mentor. If any of them is the mentor this case assigned, the
- *     first class is genuinely booked: stop for good. If none is, they are
- *     somebody else's and the ask continues.
+ *   - **no meetings on the group** -> ask.
+ *   - **any meeting at all** -> stop asking, for good.
+ *
+ * Whose meeting it is deliberately does not matter. This used to check the
+ * booking against the case's assigned mentor, on the reasoning that SYNC reuses
+ * a group_id for the group's whole life so an old meeting could belong to a
+ * previous mentor. In practice that check produced the opposite of what it was
+ * for: it kept asking families who had plainly already booked, because the
+ * meeting was under a mentor spelling or SYNC id the case didn't carry. A
+ * booked group being asked again is the failure worth avoiding, so the count is
+ * now the whole test.
  *
  * Cancelled meetings count, deliberately -- see listMeetingsForGroup.
  *
- * "Stop for good" is a stamp on the case (first_class_confirmed_at), so a
- * group that has been resolved is never re-examined against SYNC again.
+ * "Stop asking" is a stamp on the case (first_class_confirmed_at), so a group
+ * that has been resolved is never re-examined against SYNC again.
  */
 
 export interface FirstClassSummary {
@@ -44,9 +46,6 @@ export interface FirstClassSummary {
   skipped: number;
   errors: number;
 }
-
-/** Meetings at or above this count end the chase without a mentor check. */
-const ESTABLISHED_MEETINGS = 4;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -64,46 +63,6 @@ async function assignedMentorPhone(groupCase: db.GroupCase): Promise<string> {
     if (user) return sync.phoneDigits(user.phone_number ?? '');
   }
   return '';
-}
-
-/**
- * Is one of these meetings the assigned mentor's?
- *
- * By SYNC id where the case has one, and otherwise by looking each distinct
- * mentor_id up in SYNC's users and comparing phone numbers -- which is what
- * the older cases, assigned before mentor_sync_user_id existed, need.
- */
-async function meetingsBelongToMentor(
-  groupCase: db.GroupCase,
-  meetings: sync.Meeting[]
-): Promise<{ matched: boolean; reason: string }> {
-  const mentorIds = [...new Set(meetings.map((m) => m.mentor_id).filter((id): id is string => !!id))];
-  if (mentorIds.length === 0) {
-    return { matched: false, reason: 'the meetings on this group name no mentor' };
-  }
-
-  if (groupCase.mentorSyncUserId && mentorIds.includes(groupCase.mentorSyncUserId)) {
-    return { matched: true, reason: `a meeting is booked with ${groupCase.mentorName} (matched on SYNC id)` };
-  }
-
-  const wanted = await assignedMentorPhone(groupCase);
-  if (!wanted) {
-    return {
-      matched: false,
-      reason: `no phone number for ${groupCase.mentorName ?? 'the assigned mentor'} to check the meetings against`,
-    };
-  }
-
-  for (const id of mentorIds) {
-    const user = await sync.findUserById(id);
-    if (user && sync.phoneDigits(user.phone_number ?? '') === wanted) {
-      return { matched: true, reason: `a meeting is booked with ${groupCase.mentorName} (matched on phone number)` };
-    }
-  }
-  return {
-    matched: false,
-    reason: `the ${meetings.length} meeting(s) on this group belong to another mentor`,
-  };
 }
 
 /** Has a whole day passed since this group was last asked? */
@@ -125,28 +84,17 @@ async function runOne(
 
   const meetings = await sync.listMeetingsForGroup(groupId);
 
-  if (meetings.length >= ESTABLISHED_MEETINGS) {
+  if (meetings.length > 0) {
+    const reason =
+      `${meetings.length} meeting(s) on this group in SYNC` +
+      ' -- the first class is booked';
     await db.updateCase(groupCase.id, {
       firstClassConfirmedAt: new Date(),
-      firstClassConfirmedReason: `${meetings.length} meetings on this group -- already running`,
+      firstClassConfirmedReason: reason,
     });
     summary.confirmed += 1;
-    console.log(`[case ${groupCase.id}] ${meetings.length} meetings -- no longer asking`);
+    console.log(`[case ${groupCase.id}] ${reason} -- no longer asking`);
     return false;
-  }
-
-  if (meetings.length > 0) {
-    const { matched, reason } = await meetingsBelongToMentor(groupCase, meetings);
-    if (matched) {
-      await db.updateCase(groupCase.id, {
-        firstClassConfirmedAt: new Date(),
-        firstClassConfirmedReason: reason,
-      });
-      summary.confirmed += 1;
-      console.log(`[case ${groupCase.id}] ${reason} -- no longer asking`);
-      return false;
-    }
-    console.log(`[case ${groupCase.id}] ${reason} -- still asking`);
   }
 
   // A redeploy restarts the cron, so this is what stops a second copy of the
@@ -156,29 +104,31 @@ async function runOne(
     return false;
   }
 
-  if (!groupCase.mentorName) {
-    summary.skipped += 1;
-    console.warn(`[case ${groupCase.id}] no mentor name to address the message to`);
-    return false;
-  }
-
   // Only mention numbers that are actually in the group. WhatsApp shows a
   // mention of a non-member as the raw digits rather than a name, so anyone
   // who isn't in the group is named instead -- which reads correctly whether
   // or not they are there.
   const members = new Set(await periskope.getChatMemberPhones(groupCase.chatId));
   const studentPhone = sync.phoneDigits(groupCase.studentPhone ?? '');
-  const mentorPhone = await assignedMentorPhone(groupCase);
+  const mentorPhone = groupCase.mentorName
+    ? await assignedMentorPhone(groupCase)
+    : '';
 
   const prompt = templates.firstClassPrompt({
     student: {
       name: groupCase.studentName,
       phone: members.has(studentPhone) ? studentPhone : null,
     },
-    mentor: {
-      name: groupCase.mentorName,
-      phone: members.has(mentorPhone) ? mentorPhone : null,
-    },
+    // Named only when the case has a mentor. Asking when the first class
+    // should be does not depend on knowing who will teach it.
+    ...(groupCase.mentorName
+      ? {
+          mentor: {
+            name: groupCase.mentorName,
+            phone: members.has(mentorPhone) ? mentorPhone : null,
+          },
+        }
+      : {}),
   });
 
   await periskope.sendMessage(groupCase.chatId, prompt.message, {
@@ -203,7 +153,7 @@ async function runOne(
     await slack.postMessage({
       text:
         `:calendar: *${groupCase.groupName}* still has no meeting on SYNC ${days} days after ` +
-        `${groupCase.mentorName} was introduced. The group has been asked ` +
+        `${groupCase.mentorName ?? 'their mentor'} was introduced. The group has been asked ` +
         `${groupCase.firstClassPromptCount + 1} times and is still being asked daily.`,
       channel: groupCase.slackChannel,
       threadTs: groupCase.slackThreadTs,
