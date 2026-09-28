@@ -109,29 +109,50 @@ export async function runSheetSync(): Promise<SheetSyncSummary> {
 
     try {
       const setup = entry.setup;
+      const storedTitle = (setup?.projectTitle ?? '').trim();
 
-      // Never seen before. On a case that already has details this is the
-      // first pass after deploy, so the sheet is adopted as the baseline
-      // without overwriting anything -- the dashboard's copy stands. On a case
-      // with no details at all, the sheet is the only source there is.
-      if (!setup) {
+      // We hold no title, so there is nothing of ours for the sheet to
+      // overwrite and the sheet is the only source there is.
+      //
+      // The test is the stored title, not the absence of a project_setups row.
+      // It used to be the row, and that was wrong in a way that was invisible:
+      // registerCase writes a row as soon as intake reports a Drive folder, so
+      // a case can hold a row carrying nothing but a folder id. Those fell past
+      // this branch into the baseline below, which recorded the sheet as "seen"
+      // and ingested nothing -- and since ingestion from then on needs the
+      // sheet to *differ* from what was seen, a row whose title was already
+      // filled in before that first pass was never read at all. Four cases sat
+      // like that, each with a title in the sheet and none in the database.
+      if (!setup || !storedTitle) {
         if (!fromSheet.description) {
           summary.skipped += 1;
           continue;
         }
+        // An existing row may already have been submitted (by the dashboard,
+        // with a description but no title -- or by a hand edit). Re-stamping
+        // submitted_at would reorder the setup queue, so it is set only once.
+        const submit = !setup?.submittedAt;
         await db.applySheetDetails(entry.caseId, {
           projectTitle: fromSheet.title,
           projectDescription: fromSheet.description,
-          submit: true,
+          submit,
           seen: fromSheet,
-          revision: 1,
+          revision: (setup?.detailsRevision ?? 0) + 1,
+          ...(setup?.status === 'DONE' ? { reopen: true } : {}),
         });
         summary.updated += 1;
-        summary.submitted += 1;
-        console.log(`[${entry.caseId}] project details taken from sheet row ${entry.sheetRow}`);
+        if (submit) summary.submitted += 1;
+        console.log(
+          `[${entry.caseId}] project details taken from sheet row ${entry.sheetRow}` +
+            (setup ? ' (row existed but held no title)' : '') +
+            (submit ? ' (now eligible for setup)' : '')
+        );
         continue;
       }
 
+      // A title we hold and have never compared against the sheet. Adopt the
+      // sheet as the baseline without overwriting: this is the first pass over
+      // a case whose details came from the dashboard, and that copy stands.
       if (!setup.sheetDetailsSeen) {
         await db.markSheetDetailsSeen(entry.caseId, fromSheet);
         summary.baselined += 1;
