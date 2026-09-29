@@ -40,6 +40,10 @@ export interface SheetSyncSummary {
   updated: number;
   /** Cases made eligible for setup by having a title and a description. */
   submitted: number;
+  /** Cases whose stored sheet_row had drifted and was corrected by email. */
+  rowsCorrected: number;
+  /** Cases read nothing because their row could not be confirmed as theirs. */
+  unverified: number;
   skipped: number;
   errors: number;
   /** What the mentor columns on those same rows came to. */
@@ -51,12 +55,68 @@ const differs = (
   b: { title: string; description: string }
 ) => a.title !== b.title || a.description !== b.description;
 
+const normEmail = (raw: string | null | undefined): string =>
+  (raw ?? '').trim().toLowerCase();
+
+/**
+ * The row that actually belongs to this case, or null with the reason it
+ * cannot be established.
+ *
+ * A stored `sheet_row` is a guess about where a student sits, not a fact. The
+ * sheet is sorted and inserted into, so row numbers slide off the students
+ * they were recorded for -- which is how ten groups were renamed to each
+ * other's projects: the numbers had drifted, the sync read whatever now sat at
+ * each one, and every value it ingested was somebody else's.
+ *
+ * So the row number is treated as a hint and the email as the identity. The
+ * stored row is checked first (the common case, one map lookup, no cost), and
+ * only a mismatch pays for the index.
+ *
+ * Nothing is ingested on an unverifiable row. A case with no email cannot be
+ * checked at all; an email the sheet does not hold cannot be located; an email
+ * on two rows cannot be told apart. All three skip, because writing a project
+ * title onto the wrong family is worse than writing none.
+ */
+function resolveRow(
+  entry: db.SheetSyncCase,
+  bySheetRow: Map<number, sheets.SheetRowValues>,
+  byEmail: Map<string, number | null>
+):
+  | { row: number; values: sheets.SheetRowValues; moved: boolean }
+  | { row: null; reason: string } {
+  const wanted = normEmail(entry.studentEmail);
+  if (!wanted) {
+    return { row: null, reason: 'the case has no student email to verify a row against' };
+  }
+
+  const stored = bySheetRow.get(entry.sheetRow);
+  if (stored && normEmail(stored.studentEmail) === wanted) {
+    return { row: entry.sheetRow, values: stored, moved: false };
+  }
+
+  const found = byEmail.get(wanted);
+  if (found === undefined) {
+    return { row: null, reason: `${entry.studentEmail} is not on any row of the sheet` };
+  }
+  if (found === null) {
+    return { row: null, reason: `${entry.studentEmail} appears on more than one row` };
+  }
+
+  const values = bySheetRow.get(found);
+  if (!values) {
+    return { row: null, reason: `row ${found} vanished between reading and indexing` };
+  }
+  return { row: found, values, moved: true };
+}
+
 export async function runSheetSync(): Promise<SheetSyncSummary> {
   const summary: SheetSyncSummary = {
     considered: 0,
     baselined: 0,
     updated: 0,
     submitted: 0,
+    rowsCorrected: 0,
+    unverified: 0,
     skipped: 0,
     errors: 0,
     mentors: emptyMentorSummary(),
@@ -77,14 +137,46 @@ export async function runSheetSync(): Promise<SheetSyncSummary> {
   // Read from SYNC at most once, and only if some row actually names a mentor.
   const syncDirectory = new SyncDirectory();
 
+  // Built once from the read above, and only consulted when a stored row
+  // number fails its check.
+  const byEmail = sheets.indexByStudentEmail(bySheetRow);
+
   for (const entry of cases) {
-    const sheetRow = bySheetRow.get(entry.sheetRow);
-    if (!sheetRow) {
-      // The row is gone (deleted, or the tab was re-cut). Leave the case be:
-      // its details are already stored, and guessing at a new row number would
-      // be worse than doing nothing.
+    // Identity before data: nothing below may read a row that has not been
+    // confirmed to belong to this student.
+    const resolved = resolveRow(entry, bySheetRow, byEmail);
+    if (resolved.row === null) {
       summary.skipped += 1;
+      summary.unverified += 1;
+      console.warn(
+        `[${entry.caseId}] ${entry.studentName}: ${resolved.reason} -- nothing read from the sheet`
+      );
       continue;
+    }
+
+    const sheetRow = resolved.values;
+
+    // The student moved. Correct the stored number before using it, so the
+    // next pass starts from the right place and the dashboard stops pointing
+    // at somebody else's row.
+    if (resolved.moved) {
+      const from = entry.sheetRow;
+      entry.sheetRow = resolved.row;
+      summary.rowsCorrected += 1;
+      try {
+        await db.updateCase(entry.caseId, { sheetRow: resolved.row });
+        console.log(
+          `[${entry.caseId}] ${entry.studentName} moved from sheet row ${from} to ${resolved.row}`
+        );
+      } catch (err) {
+        // The read is still correct -- it was verified by email -- so carry on
+        // with it. Only the stored number is stale, and the next pass re-finds
+        // it the same way.
+        console.error(
+          `[${entry.caseId}] read row ${resolved.row} but could not store it:`,
+          err
+        );
+      }
     }
 
     // Before the details branches below, all of which skip on their own terms:

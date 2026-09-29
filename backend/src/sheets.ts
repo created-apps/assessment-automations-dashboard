@@ -147,6 +147,15 @@ export async function writeRowCells(
 
 /** One intake row, as far as this service reads it. */
 export interface SheetRowValues {
+  /**
+   * Whose row this is.
+   *
+   * Row numbers are not stable -- the sheet is sorted and inserted into, so a
+   * case's stored sheet_row drifts off the student it was recorded for. This
+   * is what a read is checked against before its values are believed. Blank
+   * when the cell is empty, which means the row cannot be identified at all.
+   */
+  studentEmail: string;
   /** The pair either writer can edit; stored verbatim as sheet_details_seen. */
   details: { title: string; description: string };
   /** The mentor ops named on the row. Blank when the cell is empty. */
@@ -188,12 +197,22 @@ export async function readProjectDetails(): Promise<Map<number, SheetRowValues>>
   }
   const mentorNameCol = headers.indexOf('Mentor Name');
   const mentorEmailCol = headers.indexOf('Mentor Email');
+  // Required, because it is what says a row belongs to the case reading it.
+  // Without it every read is taken on trust in a row number that drifts.
+  const studentEmailCol = headers.indexOf('Student Email');
+  if (studentEmailCol === -1) {
+    throw new Error(
+      'Sheet has no "Student Email" column, so no row can be verified against ' +
+        `the case reading it -- headers seen: ${headers.filter(Boolean).join(' | ')}`
+    );
+  }
 
   const cell = (cells: string[], index: number) =>
     index === -1 ? '' : String(cells[index] ?? '').trim();
 
   values.slice(1).forEach((cells, i) => {
     out.set(i + 2, {
+      studentEmail: cell(cells, studentEmailCol),
       details: {
         title: cell(cells, titleCol),
         description: cell(cells, descriptionCol),
@@ -203,4 +222,25 @@ export async function readProjectDetails(): Promise<Map<number, SheetRowValues>>
     });
   });
   return out;
+}
+
+/**
+ * The row each student's email sits on, for re-finding a case whose stored row
+ * number has drifted.
+ *
+ * Built from a read the pass has already done, so verification costs nothing
+ * extra. An address on more than one row maps to `null`: two rows claiming the
+ * same student is a question for a person, and picking one would be the same
+ * guess that put the wrong project on ten groups.
+ */
+export function indexByStudentEmail(
+  rows: Map<number, SheetRowValues>
+): Map<string, number | null> {
+  const index = new Map<string, number | null>();
+  for (const [rowNumber, values] of rows) {
+    const email = values.studentEmail.trim().toLowerCase();
+    if (!email) continue;
+    index.set(email, index.has(email) ? null : rowNumber);
+  }
+  return index;
 }

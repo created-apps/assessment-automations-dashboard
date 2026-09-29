@@ -484,6 +484,8 @@ export interface CasePatch {
   parentPhone?: string | null;
   parentEmail?: string | null;
   projectName?: string | null;
+  /** Corrected when a sheet read finds the student's email on another row. */
+  sheetRow?: number | null;
   supabaseGroupId?: string | null;
   inviteLink?: string | null;
   payload?: unknown;
@@ -538,6 +540,7 @@ export async function updateCase(
   set('parent_phone', patch.parentPhone);
   set('parent_email', patch.parentEmail);
   set('project_name', patch.projectName);
+  set('sheet_row', patch.sheetRow);
   set('supabase_group_id', patch.supabaseGroupId);
   set('invite_link', patch.inviteLink);
   set('payload', patch.payload);
@@ -892,6 +895,8 @@ export interface SheetSyncCase {
   sheetRow: number;
   groupName: string;
   studentName: string;
+  /** What the row is checked against before its values are believed. */
+  studentEmail: string | null;
   /** The three things that say whether a mentor has already been dealt with. */
   stage: CaseStage;
   mentorName: string | null;
@@ -914,7 +919,7 @@ export interface SheetSyncCase {
 export async function listCasesForSheetSync(): Promise<SheetSyncCase[]> {
   const params = new URLSearchParams({
     select:
-      'id,sheet_row,group_name,student_name,stage,mentor_name,mentor_intro_sent_at,' +
+      'id,sheet_row,group_name,student_name,student_email,stage,mentor_name,mentor_intro_sent_at,' +
       'slack_channel,slack_thread_ts,mentor_alert_key,project_setups(*)',
     sheet_row: 'not.is.null',
     [LIVE_ONLY[0]]: LIVE_ONLY[1],
@@ -925,6 +930,7 @@ export async function listCasesForSheetSync(): Promise<SheetSyncCase[]> {
       sheet_row: number;
       group_name: string;
       student_name: string;
+      student_email: string | null;
       stage: CaseStage;
       mentor_name: string | null;
       mentor_intro_sent_at: string | null;
@@ -946,6 +952,7 @@ export async function listCasesForSheetSync(): Promise<SheetSyncCase[]> {
       sheetRow: row.sheet_row,
       groupName: row.group_name,
       studentName: row.student_name,
+      studentEmail: row.student_email,
       stage: row.stage,
       mentorName: row.mentor_name,
       mentorIntroSentAt: date(row.mentor_intro_sent_at),
