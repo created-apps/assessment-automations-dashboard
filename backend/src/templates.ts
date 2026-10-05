@@ -30,8 +30,24 @@ export function prototypingAssessment(ctx: StudentContext): string {
   );
 }
 
-export function bookingInvite(host: { name: string; url: string }): string {
-  return `Hi,\nPlease use this link to book a session with ${host.name}: ${host.url}`;
+/**
+ * `studentEmail` is asked for rather than optional-by-default: Calendly keys a
+ * booking on the email entered, and a parent booking under their own address
+ * leaves the session unmatchable to the student. Omitted from the message when
+ * the case has no email, since a line reading "book with this email:" and
+ * nothing after it is worse than no line at all.
+ */
+export function bookingInvite(
+  host: { name: string; url: string },
+  studentEmail?: string | null
+): string {
+  const lines = [
+    'Hi,',
+    `Please use this link to book a session with ${host.name}: ${host.url}`,
+  ];
+  const email = (studentEmail ?? '').trim();
+  if (email) lines.push(`Please book with this email : ${email}`);
+  return lines.join('\n');
 }
 
 /** The mentor's introduction goes into the group as written in the directory. */

@@ -394,7 +394,7 @@ export function renderPreview(
           available: hosts.map((h) => h.name),
         });
       }
-      return templates.bookingInvite(match.best!.item);
+      return templates.bookingInvite(match.best!.item, groupCase.studentEmail);
     }
   }
 }
@@ -787,7 +787,10 @@ async function scheduleMeeting(
   }
 
   const host = match.best!.item;
-  await periskope.sendMessage(groupCase.chatId, templates.bookingInvite(host));
+  await periskope.sendMessage(
+    groupCase.chatId,
+    templates.bookingInvite(host, groupCase.studentEmail)
+  );
   const updated = await advance(groupCase);
 
   return { updated, detail: { host: host.name } };
