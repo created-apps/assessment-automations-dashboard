@@ -113,6 +113,12 @@ export type MeetingHost =
   | "Dhruv Singh"
   | "Dhruv + Aashna"
   | "Urja + Aashna"
+  | "Dhruv + Omm"
+  | "Urja + Omm"
+  | "Aashna + Omm"
+  | "Dhruv + Rajshree"
+  | "Urja + Rajshree"
+  | "Aashna + Rajshree"
 
 export interface CaseSummary extends GroupCase {
   last_action_kind: ActionKind | null

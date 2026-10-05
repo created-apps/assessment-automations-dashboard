@@ -29,12 +29,24 @@ import { queueAction, scheduleMeeting } from "@/lib/api"
 import { authorizeSend } from "@/lib/authorize-send"
 import type { GroupCase, MeetingHost } from "@/lib/types"
 
+/**
+ * Mirrors the backend's bookingHosts(). Kept in sync by hand: the backend also
+ * serves the configured list at GET /api/hosts, and driving the picker from
+ * that would drop options whose Calendly link is unset instead of offering
+ * them -- see the note in the accompanying change.
+ */
 const HOSTS: MeetingHost[] = [
   "Aashna Saraf",
   "Urja Jhaveri",
   "Dhruv Singh",
   "Dhruv + Aashna",
   "Urja + Aashna",
+  "Dhruv + Omm",
+  "Urja + Omm",
+  "Aashna + Omm",
+  "Dhruv + Rajshree",
+  "Urja + Rajshree",
+  "Aashna + Rajshree",
 ]
 
 export function MeetingDialog({

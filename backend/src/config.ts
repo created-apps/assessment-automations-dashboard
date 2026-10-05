@@ -69,6 +69,12 @@ function bookingHosts(): { name: string; url: string }[] {
     // Joint availability links -- two hosts on one Calendly booking page.
     { name: 'Dhruv + Aashna', env: 'CALENDLY_DHRUV_AASHNA' },
     { name: 'Urja + Aashna', env: 'CALENDLY_URJA_AASHNA' },
+    { name: 'Dhruv + Omm', env: 'CALENDLY_DHRUV_OMM' },
+    { name: 'Urja + Omm', env: 'CALENDLY_URJA_OMM' },
+    { name: 'Aashna + Omm', env: 'CALENDLY_AASHNA_OMM' },
+    { name: 'Dhruv + Rajshree', env: 'CALENDLY_DHRUV_RAJSHREE' },
+    { name: 'Urja + Rajshree', env: 'CALENDLY_URJA_RAJSHREE' },
+    { name: 'Aashna + Rajshree', env: 'CALENDLY_AASHNA_RAJSHREE' },
   ];
 
   const configured = hosts
