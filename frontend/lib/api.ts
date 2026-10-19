@@ -254,6 +254,38 @@ export function saveProjectSetup(
   )
 }
 
+export interface PhoneChangeResult {
+  case: GroupCase
+  role: "student" | "parent"
+  previous_phone: string | null
+  phone: string
+  unchanged: boolean
+  /**
+   * What became of the row the group-creation service is waiting on:
+   * `updated` moved it, `already_joined` / `target_exists` / `not_tracked` /
+   * `no_group_request` / `no_previous_number` all left it alone, each for a
+   * reason worth telling the person who asked.
+   */
+  participant: { status: string; mode?: string; joined?: boolean }
+  sync: { status: string; reason?: string; name?: string }
+}
+
+/**
+ * Correct the student's or parent's phone number. Admin-only (enforced
+ * server-side). Nothing is sent and the WhatsApp group is not touched — see
+ * the backend route for what this does and does not change.
+ */
+export function changePhone(
+  caseId: string,
+  role: "student" | "parent",
+  phone: string,
+): Promise<PhoneChangeResult> {
+  return request<PhoneChangeResult>(
+    `/api/cases/${encodeURIComponent(caseId)}/phone`,
+    { method: "PATCH", body: JSON.stringify({ role, phone }) },
+  )
+}
+
 export interface StopResult {
   case: GroupCase
   cancelled: number

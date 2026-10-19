@@ -656,6 +656,98 @@ export async function updateAction(
 }
 
 // ---------------------------------------------------------------------------
+// participants -- the numbers a group is still waiting on.
+//
+// This table is owned by the group-creation service (its Prisma schema,
+// `model Participant`), and lives in the same database as group_cases, so it
+// is reached the same way as everything else here. One row per number that
+// service put in a group, keyed (group_request_id, phone) -- our cases carry
+// the group_request_id.
+//
+// It matters for one thing only: a correction. While the group request is
+// PENDING, that service's join check polls the WhatsApp member list for the
+// numbers whose row says joined=false, and the welcome -- and with it the
+// handover that opens this case's Slack thread -- is held until every one of
+// them is in. A wrong number there is a group that waits forever, so a phone
+// number corrected in the dashboard has to be corrected here FIRST; fixing
+// only group_cases would leave the family looking right on screen while the
+// automation still chases a number nobody holds.
+
+export type JoinMode = 'FORCE_ADD' | 'INVITE';
+
+export interface Participant {
+  id: string;
+  groupRequestId: string;
+  phone: string;
+  mode: JoinMode;
+  /** False while the join check is still waiting on this number. */
+  joined: boolean;
+  joinedAt: Date | null;
+}
+
+interface ParticipantRow {
+  id: string;
+  group_request_id: string;
+  phone: string;
+  mode: JoinMode;
+  joined: boolean;
+  joined_at: string | null;
+}
+
+const toParticipant = (row: ParticipantRow): Participant => ({
+  id: row.id,
+  groupRequestId: row.group_request_id,
+  phone: row.phone,
+  mode: row.mode,
+  joined: row.joined,
+  joinedAt: date(row.joined_at),
+});
+
+/**
+ * The rows for one number in one group request.
+ *
+ * A list rather than a single row: (group_request_id, phone) is unique, so
+ * there is at most one, but a caller asking about the number it is replacing
+ * wants "none" to be an ordinary answer rather than a 404.
+ */
+export async function findParticipants(
+  groupRequestId: string,
+  phone: string
+): Promise<Participant[]> {
+  if (!groupRequestId || !phone) return [];
+  const params = new URLSearchParams({
+    select: 'id,group_request_id,phone,mode,joined,joined_at',
+    group_request_id: `eq.${groupRequestId}`,
+    phone: `eq.${phone}`,
+  });
+  const rows = await call<ParticipantRow[]>('GET', `/participants?${params}`);
+  return rows.map(toParticipant);
+}
+
+/**
+ * Point a participant row at a different number.
+ *
+ * Only the phone is touched: `joined` stays false and `joined_at` stays null,
+ * so the next join check treats the new number as what it has been waiting on
+ * all along. The unique index on (group_request_id, phone) is the guard
+ * against two rows for the same number -- callers check for an existing row
+ * first and this is the backstop, which surfaces as a 409 DbError.
+ */
+export async function updateParticipantPhone(
+  id: string,
+  phone: string
+): Promise<Participant> {
+  const rows = await call<ParticipantRow[]>(
+    'PATCH',
+    `/participants?id=eq.${encodeURIComponent(id)}`,
+    { body: { phone }, prefer: 'return=representation' }
+  );
+  const row = rows[0];
+  if (!row) throw new DbError(`participants ${id} not found`, 404, rows);
+  return toParticipant(row);
+}
+
+// ---------------------------------------------------------------------------
 // project_setups -- Stage 5 details entered from the dashboard.
 //
 // This table is owned by the project-setup service (its

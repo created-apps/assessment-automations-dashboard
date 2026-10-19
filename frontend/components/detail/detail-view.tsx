@@ -164,7 +164,7 @@ export function DetailView({ id }: { id: string }) {
         </div>
 
         <div className="flex flex-col gap-6">
-          <ContactsPanel groupCase={groupCase} />
+          <ContactsPanel groupCase={groupCase} onDone={refresh} />
 
           <Card>
             <CardHeader>

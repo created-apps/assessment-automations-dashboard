@@ -214,6 +214,54 @@ export async function findUserById(id: string): Promise<SyncUser | null> {
   return rows[0] ?? null;
 }
 
+/**
+ * Move a SYNC user onto a different number, found by the number they are on
+ * now. Returns what happened, rather than throwing, because this runs as the
+ * last step of a phone correction that has already been applied elsewhere:
+ * SYNC being behind is worth reporting, not worth failing the correction over.
+ *
+ *   'updated'   -- the row was moved to the new number
+ *   'not-found' -- nobody on SYNC holds the old number; nothing to move
+ *   'taken'     -- a DIFFERENT user already holds the new number. Two rows are
+ *                  not merged from here: phone_number is SYNC's natural key,
+ *                  and which of the two owns the memberships is a question for
+ *                  whoever looks at it.
+ *   'same'      -- they are already on the new number
+ */
+export type PhoneMoveOutcome =
+  | { status: 'updated'; user: SyncUser }
+  | { status: 'not-found' }
+  | { status: 'taken'; user: SyncUser }
+  | { status: 'same'; user: SyncUser };
+
+export async function moveUserPhone(
+  oldDigits: string,
+  newDigits: string
+): Promise<PhoneMoveOutcome> {
+  const existing = await findUserByPhone(oldDigits);
+  if (!existing) return { status: 'not-found' };
+
+  const onNew = await findUserByPhone(newDigits);
+  if (onNew) {
+    return onNew.id === existing.id
+      ? { status: 'same', user: onNew }
+      : { status: 'taken', user: onNew };
+  }
+
+  const updated = await call<SyncUser[]>(
+    'PATCH',
+    `/users?id=eq.${encodeURIComponent(existing.id)}`,
+    {
+      body: { phone_number: formatPhone(newDigits) },
+      prefer: 'return=representation',
+    }
+  );
+  return {
+    status: 'updated',
+    user: updated[0] ?? { ...existing, phone_number: formatPhone(newDigits) },
+  };
+}
+
 export interface EnsureMentorInput {
   name: string;
   /** Required: SYNC's users.phone_number is NOT NULL and is the natural key. */

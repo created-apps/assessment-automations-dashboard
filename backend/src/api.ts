@@ -13,6 +13,7 @@ import {
 import { PeriskopeError } from './periskope';
 // import * as sheets from './sheets'; // re-enable with the sheet write-back below
 import { ensureMentorOnSync } from './mentor-sync';
+import * as sync from './sync';
 
 /**
  * The dashboard's API.
@@ -608,6 +609,191 @@ api.delete('/cases/:id/queue/:queuedId', async (req, res) => {
         .json({ error: 'that action is not queued any more -- it may already have been sent' });
     }
     return res.status(204).end();
+  } catch (err) {
+    return fail(res, err);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Correcting a phone number
+// ---------------------------------------------------------------------------
+
+/**
+ * A number as every table here stores it: digits only, country code included.
+ *
+ * Same rule as the group-creation service's normalizePhone, because the rows
+ * this corrects were written by it and are matched on exact equality -- a
+ * number saved as "+91 98765 43210" would simply never be found again.
+ */
+const phoneField = z
+  .string()
+  .trim()
+  .transform((raw) => raw.replace(/\D/g, ''))
+  .refine((digits) => digits.length >= 8 && digits.length <= 15, {
+    message:
+      'Give the number in full, with its country code and no spaces (8-15 digits)',
+  });
+
+const phoneChangeSchema = z.object({
+  role: z.enum(['student', 'parent']),
+  phone: phoneField,
+  actor: z.string().trim().min(1).optional(),
+});
+
+/** What became of the `participants` row for the number being replaced. */
+type ParticipantOutcome =
+  /** The row was moved, so the join check now waits on the new number. */
+  | { status: 'updated'; mode: db.JoinMode }
+  /** They are already in the group under the old number -- row left alone. */
+  | { status: 'already_joined' }
+  /** The new number already has a row here; nothing to move it onto. */
+  | { status: 'target_exists'; joined: boolean }
+  /** The old number was never tracked for this group. */
+  | { status: 'not_tracked' }
+  /** Pre-handover cases only carry a group request; without one there is no row. */
+  | { status: 'no_group_request' }
+  /** No old number on file, so there is nothing to look the row up by. */
+  | { status: 'no_previous_number' };
+
+/**
+ * PATCH /api/cases/:id/phone
+ *
+ * Correct the student's or the parent's number -- the wrong-digit case, which
+ * until now meant editing Supabase by hand.
+ *
+ * Two tables hold it, and the order below is the whole point:
+ *
+ *  1. `participants`, in the group-creation service. While that service's
+ *     group request is PENDING its join check polls for the numbers whose row
+ *     says joined=false, and holds the welcome -- and the handover that opens
+ *     this case's Slack thread -- until all of them are in the group. That is
+ *     the row that is actually waiting on somebody, so it is corrected first:
+ *     if this step fails the request stops here, and group_cases keeps the old
+ *     number. A case that reads wrong is recoverable; one that reads right
+ *     while the automation chases a dead number is the bug nobody would spot.
+ *
+ *  2. `group_cases`, which is what the dashboard, the nudges and the messages
+ *     to the family all read.
+ *
+ * Then SYNC's `users.phone_number`, best-effort: it is keyed on the number, so
+ * leaving it stale is what makes a membership link quietly fail to be created
+ * later. It is optional config and a separate project, so a failure there is
+ * reported alongside a successful correction rather than undoing it.
+ *
+ * Nothing is sent and nothing is changed on WhatsApp: the new number is not
+ * invited to the group, and the old one is not removed. Getting the right
+ * person into the chat stays a deliberate act -- the group's invite link is on
+ * the dashboard for exactly that.
+ */
+api.patch('/cases/:id/phone', async (req, res) => {
+  const parsed = phoneChangeSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({
+      error: parsed.error.issues[0]?.message ?? 'Invalid request body',
+      issues: parsed.error.issues.map((i) => ({
+        path: i.path.join('.'),
+        message: i.message,
+      })),
+    });
+  }
+
+  const { role, phone, actor } = parsed.data;
+
+  try {
+    const groupCase = await db.findCaseById(req.params.id);
+    if (!groupCase) return res.status(404).json({ error: 'case not found' });
+
+    const previous =
+      role === 'student' ? groupCase.studentPhone : groupCase.parentPhone;
+
+    // Already this number. Reported rather than refused: the caller asked for
+    // a state, and it is the state -- but nothing is written, so a retry of a
+    // request that did land can't disturb the participant row.
+    if (previous === phone) {
+      return res.json({
+        case: toApiCase(groupCase),
+        role,
+        previous_phone: previous,
+        phone,
+        unchanged: true,
+        participant: { status: 'not_tracked' } satisfies ParticipantOutcome,
+        sync: { status: 'skipped', reason: 'number unchanged' },
+      });
+    }
+
+    // --- 1. participants, first ---------------------------------------------
+    let participant: ParticipantOutcome;
+    if (!groupCase.groupRequestId) {
+      participant = { status: 'no_group_request' };
+    } else if (!previous) {
+      participant = { status: 'no_previous_number' };
+    } else {
+      const rows = await db.findParticipants(groupCase.groupRequestId, previous);
+      const row = rows[0];
+      if (!row) {
+        participant = { status: 'not_tracked' };
+      } else if (row.joined) {
+        // Whoever holds the old number is in the group already. Moving the row
+        // would mark the new number joined without it ever having been there,
+        // and the old member would stop being accounted for at all.
+        participant = { status: 'already_joined' };
+      } else {
+        const onNew = await db.findParticipants(
+          groupCase.groupRequestId,
+          phone
+        );
+        if (onNew[0]) {
+          // (group_request_id, phone) is unique, so there is nowhere to move
+          // the row to -- and nothing to fix: the new number is already being
+          // waited on, or already in.
+          participant = { status: 'target_exists', joined: onNew[0].joined };
+        } else {
+          const moved = await db.updateParticipantPhone(row.id, phone);
+          participant = { status: 'updated', mode: moved.mode };
+        }
+      }
+    }
+
+    // --- 2. group_cases -----------------------------------------------------
+    const updated = await db.updateCase(groupCase.id,
+      role === 'student' ? { studentPhone: phone } : { parentPhone: phone }
+    );
+
+    // --- 3. SYNC, best-effort ----------------------------------------------
+    let syncResult: { status: string; reason?: string; name?: string };
+    if (!sync.syncConfigured()) {
+      syncResult = { status: 'skipped', reason: 'SYNC is not configured' };
+    } else if (!previous) {
+      syncResult = { status: 'skipped', reason: 'no previous number to find them by' };
+    } else {
+      try {
+        const moved = await sync.moveUserPhone(sync.phoneDigits(previous), phone);
+        syncResult =
+          moved.status === 'not-found'
+            ? { status: 'not_found' }
+            : { status: moved.status.replace('-', '_'), name: moved.user.name };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`[${groupCase.id}] SYNC phone update failed:`, err);
+        syncResult = { status: 'failed', reason: message };
+      }
+    }
+
+    console.log(
+      `[${groupCase.id}] ${role} phone ${previous ?? 'none'} -> ${phone} ` +
+        `by ${actor ?? 'unknown'} (${groupCase.groupName}); ` +
+        `participants: ${participant.status}, sync: ${syncResult.status}`
+    );
+
+    return res.json({
+      case: toApiCase(updated),
+      role,
+      previous_phone: previous,
+      phone,
+      unchanged: false,
+      participant,
+      sync: syncResult,
+    });
   } catch (err) {
     return fail(res, err);
   }

@@ -211,6 +211,34 @@ export function saveProjectSetup(
   )
 }
 
+export interface PhoneChangeResult {
+  case: GroupCase
+  role: "student" | "parent"
+  previous_phone: string | null
+  phone: string
+  /** True when it was already this number, so nothing was written. */
+  unchanged: boolean
+  /** What became of the group-creation service's `participants` row. */
+  participant: { status: string; mode?: string; joined?: boolean }
+  /** SYNC is optional and a separate project, so this can fail on its own. */
+  sync: { status: string; reason?: string; name?: string }
+}
+
+/**
+ * Correct the student's or parent's number. The backend's
+ * PATCH /api/cases/:id/phone writes `participants` before `group_cases`; see
+ * the comment there for why that order matters.
+ */
+export function changeCasePhone(
+  caseId: string,
+  body: { role: "student" | "parent"; phone: string; actor?: string },
+): Promise<PhoneChangeResult> {
+  return call<PhoneChangeResult>(
+    `/api/cases/${encodeURIComponent(caseId)}/phone`,
+    { method: "PATCH", body },
+  )
+}
+
 export interface StopResult {
   case: GroupCase
   /** Queued actions cancelled as part of stopping. */

@@ -1,37 +1,60 @@
 "use client"
 
+import * as React from "react"
+
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Separator } from "@/components/ui/separator"
+import { Button } from "@/components/ui/button"
 import { CopyButton } from "@/components/copy-button"
+import { useCanSendActions } from "@/components/auth/auth-provider"
+import {
+  EditPhoneDialog,
+  type PhoneRole,
+} from "@/components/detail/edit-phone-dialog"
 import type { GroupCase } from "@/lib/types"
 import { formatPhone } from "@/lib/format"
-import { GraduationCap, Mail, Phone, Users } from "lucide-react"
+import { GraduationCap, Mail, Pencil, Phone, Plus, Users } from "lucide-react"
 
 type Contact = {
-  role: string
+  role: PhoneRole
+  label: string
   name: string | null
   phone: string | null
   email: string | null
   icon: typeof GraduationCap
 }
 
-export function ContactsPanel({ groupCase }: { groupCase: GroupCase }) {
-  const contacts: Contact[] = [
+export function ContactsPanel({
+  groupCase,
+  onDone,
+}: {
+  groupCase: GroupCase
+  /** Called after a number changes, so the case is re-read. */
+  onDone?: () => void
+}) {
+  // Correcting a number repoints the automations, so it is held to the same
+  // bar as sending: admins only. The route enforces it regardless.
+  const canEdit = useCanSendActions()
+  const [editing, setEditing] = React.useState<PhoneRole | null>(null)
+
+  const contacts: Contact[] = ([
     {
-      role: "Student",
+      role: "student",
+      label: "Student",
       name: groupCase.student_name,
       phone: groupCase.student_phone,
       email: groupCase.student_email,
       icon: GraduationCap,
     },
     {
-      role: "Parent",
+      role: "parent",
+      label: "Parent",
       name: groupCase.parent_name,
       phone: groupCase.parent_phone,
       email: groupCase.parent_email,
       icon: Users,
     },
-  ].filter((c) => c.name || c.phone || c.email)
+  ] satisfies Contact[]).filter((c) => c.name || c.phone || c.email)
 
   return (
     <Card>
@@ -50,7 +73,7 @@ export function ContactsPanel({ groupCase }: { groupCase: GroupCase }) {
                 </span>
                 <div className="flex flex-col">
                   <span className="text-sm font-medium">{c.name ?? "Unknown"}</span>
-                  <span className="text-xs text-muted-foreground">{c.role}</span>
+                  <span className="text-xs text-muted-foreground">{c.label}</span>
                 </div>
               </div>
               {c.phone ? (
@@ -59,8 +82,30 @@ export function ContactsPanel({ groupCase }: { groupCase: GroupCase }) {
                     <Phone className="size-4 text-muted-foreground" aria-hidden="true" />
                     {formatPhone(c.phone)}
                   </div>
-                  <CopyButton value={c.phone} label="phone number" />
+                  <div className="flex items-center gap-1">
+                    {canEdit ? (
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
+                        aria-label={`Change ${c.label.toLowerCase()} phone number`}
+                        onClick={() => setEditing(c.role)}
+                      >
+                        <Pencil />
+                      </Button>
+                    ) : null}
+                    <CopyButton value={c.phone} label="phone number" />
+                  </div>
                 </div>
+              ) : canEdit ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-fit text-muted-foreground"
+                  onClick={() => setEditing(c.role)}
+                >
+                  <Plus data-icon="inline-start" />
+                  Add {c.label.toLowerCase()} number
+                </Button>
               ) : null}
               {c.email ? (
                 <div className="flex items-center justify-between rounded-md border bg-muted/40 px-3 py-2">
@@ -75,6 +120,18 @@ export function ContactsPanel({ groupCase }: { groupCase: GroupCase }) {
           )
         })}
       </CardContent>
+
+      {editing ? (
+        <EditPhoneDialog
+          groupCase={groupCase}
+          role={editing}
+          open
+          onOpenChange={(open) => {
+            if (!open) setEditing(null)
+          }}
+          onDone={onDone}
+        />
+      ) : null}
     </Card>
   )
 }
