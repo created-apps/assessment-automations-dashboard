@@ -6,6 +6,7 @@ import { UserPlus } from "lucide-react"
 
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -89,7 +90,7 @@ export function AddMentorDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="sm:max-w-lg max-h-[calc(100dvh-2rem)] grid-rows-[auto_minmax(0,1fr)_auto]">
         <DialogHeader>
           <DialogTitle>Add a mentor</DialogTitle>
           <DialogDescription>
@@ -98,62 +99,64 @@ export function AddMentorDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <Field>
-          <FieldLabel htmlFor="m-name">Name</FieldLabel>
-          <Input
-            id="m-name"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="e.g. Dr. Nirupma Singh"
-          />
-          <FieldDescription>
-            Use the mentor&apos;s exact name as it appears in SYNC, so Stage 5
-            can link them automatically.
-          </FieldDescription>
-        </Field>
-
-        <Field>
-          <FieldLabel htmlFor="m-intro">Introduction message</FieldLabel>
-          <Textarea
-            id="m-intro"
-            value={intro}
-            onChange={(e) => setIntro(e.target.value)}
-            placeholder="I would like to introduce you to your research mentor..."
-            rows={6}
-          />
-          <FieldDescription>
-            Sent as-is into the WhatsApp group. This is the default — add named
-            alternatives below if this mentor needs more than one.
-          </FieldDescription>
-        </Field>
-
-        <IntroVariantsField
-          rows={variantRows}
-          onChange={setVariantRows}
-          idPrefix="m-add"
-        />
-
-        <div className="grid gap-4 sm:grid-cols-2">
+        <DialogBody>
           <Field>
-            <FieldLabel htmlFor="m-email">Email</FieldLabel>
+            <FieldLabel htmlFor="m-name">Name</FieldLabel>
             <Input
-              id="m-email"
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="mentor@example.com"
+              id="m-name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="e.g. Dr. Nirupma Singh"
             />
+            <FieldDescription>
+              Use the mentor&apos;s exact name as it appears in SYNC, so Stage 5
+              can link them automatically.
+            </FieldDescription>
           </Field>
+
           <Field>
-            <FieldLabel htmlFor="m-phone">Phone (required)</FieldLabel>
-            <Input
-              id="m-phone"
-              value={phone}
-              onChange={(e) => setPhone(e.target.value)}
-              placeholder="+91…"
+            <FieldLabel htmlFor="m-intro">Introduction message</FieldLabel>
+            <Textarea
+              id="m-intro"
+              value={intro}
+              onChange={(e) => setIntro(e.target.value)}
+              placeholder="I would like to introduce you to your research mentor..."
+              rows={6}
             />
+            <FieldDescription>
+              Sent as-is into the WhatsApp group. This is the default — add
+              named alternatives below if this mentor needs more than one.
+            </FieldDescription>
           </Field>
-        </div>
+
+          <IntroVariantsField
+            rows={variantRows}
+            onChange={setVariantRows}
+            idPrefix="m-add"
+          />
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field>
+              <FieldLabel htmlFor="m-email">Email</FieldLabel>
+              <Input
+                id="m-email"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="mentor@example.com"
+              />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="m-phone">Phone (required)</FieldLabel>
+              <Input
+                id="m-phone"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                placeholder="+91…"
+              />
+            </Field>
+          </div>
+        </DialogBody>
 
         <DialogFooter showCloseButton>
           <Button onClick={handleSave} disabled={!canSave}>

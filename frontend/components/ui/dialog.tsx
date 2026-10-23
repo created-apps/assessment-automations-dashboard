@@ -90,6 +90,37 @@ function DialogHeader({ className, ...props }: React.ComponentProps<"div">) {
   )
 }
 
+/**
+ * The scrollable middle of a tall dialog.
+ *
+ * A dialog is centred with a translate and has no max height, so content
+ * taller than the viewport runs off *both* ends at once — the title scrolls
+ * out of the top and the footer's confirm button out of the bottom, with
+ * nothing to scroll because the page behind it isn't what overflowed. Putting
+ * the fields in here keeps the header and footer pinned and gives the fields
+ * their own scrollbar.
+ *
+ * Use with a max height and a three-row template on DialogContent:
+ *   max-h-[calc(100dvh-2rem)] grid-rows-[auto_minmax(0,1fr)_auto]
+ * `minmax(0,1fr)` rather than `1fr`, because a grid row's default minimum is
+ * its content, which would let the row grow past the max height instead of
+ * scrolling.
+ */
+function DialogBody({ className, ...props }: React.ComponentProps<"div">) {
+  return (
+    <div
+      data-slot="dialog-body"
+      // -mx-4/px-4 pulls the scrollbar out to the popup's own edge, so it
+      // doesn't float inside the padding, and keeps focus rings from clipping.
+      className={cn(
+        "-mx-4 flex min-h-0 flex-col gap-4 overflow-y-auto px-4",
+        className
+      )}
+      {...props}
+    />
+  )
+}
+
 function DialogFooter({
   className,
   showCloseButton = false,
@@ -148,6 +179,7 @@ function DialogDescription({
 
 export {
   Dialog,
+  DialogBody,
   DialogClose,
   DialogContent,
   DialogDescription,

@@ -6,6 +6,7 @@ import { Check } from "lucide-react"
 
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -121,7 +122,7 @@ export function EditMentorDialog({
 
   return (
     <Dialog open={Boolean(mentor)} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="sm:max-w-lg max-h-[calc(100dvh-2rem)] grid-rows-[auto_minmax(0,1fr)_auto]">
         <DialogHeader>
           <DialogTitle>Edit mentor</DialogTitle>
           <DialogDescription>
@@ -131,53 +132,55 @@ export function EditMentorDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <Field>
-          <FieldLabel htmlFor="m-edit-email">Email</FieldLabel>
-          <Input
-            id="m-edit-email"
-            type="email"
-            value={email}
-            placeholder="name@example.com"
-            onChange={(e) => setEmail(e.target.value)}
-          />
-          <FieldDescription>
-            How the intake sheet identifies this mentor — matched exactly. A
-            mentor with no email here cannot be named from the sheet at all.
-          </FieldDescription>
-        </Field>
+        <DialogBody>
+          <Field>
+            <FieldLabel htmlFor="m-edit-email">Email</FieldLabel>
+            <Input
+              id="m-edit-email"
+              type="email"
+              value={email}
+              placeholder="name@example.com"
+              onChange={(e) => setEmail(e.target.value)}
+            />
+            <FieldDescription>
+              How the intake sheet identifies this mentor — matched exactly. A
+              mentor with no email here cannot be named from the sheet at all.
+            </FieldDescription>
+          </Field>
 
-        <Field>
-          <FieldLabel htmlFor="m-edit-phone">Phone</FieldLabel>
-          <Input
-            id="m-edit-phone"
-            value={phone}
-            placeholder="919876543210"
-            onChange={(e) => setPhone(e.target.value)}
-          />
-          <FieldDescription>
-            Receives the group invite, and links them to their SYNC account.
-          </FieldDescription>
-        </Field>
+          <Field>
+            <FieldLabel htmlFor="m-edit-phone">Phone</FieldLabel>
+            <Input
+              id="m-edit-phone"
+              value={phone}
+              placeholder="919876543210"
+              onChange={(e) => setPhone(e.target.value)}
+            />
+            <FieldDescription>
+              Receives the group invite, and links them to their SYNC account.
+            </FieldDescription>
+          </Field>
 
-        <Field>
-          <FieldLabel htmlFor="m-edit-intro">Introduction message</FieldLabel>
-          <Textarea
-            id="m-edit-intro"
-            value={intro}
-            onChange={(e) => setIntro(e.target.value)}
-            rows={8}
-          />
-          <FieldDescription>
-            Sent as-is into the WhatsApp group, unless a named alternative
-            below is picked instead.
-          </FieldDescription>
-        </Field>
+          <Field>
+            <FieldLabel htmlFor="m-edit-intro">Introduction message</FieldLabel>
+            <Textarea
+              id="m-edit-intro"
+              value={intro}
+              onChange={(e) => setIntro(e.target.value)}
+              rows={8}
+            />
+            <FieldDescription>
+              Sent as-is into the WhatsApp group, unless a named alternative
+              below is picked instead.
+            </FieldDescription>
+          </Field>
 
-        <IntroVariantsField
-          rows={variantRows}
-          onChange={setVariantRows}
-          idPrefix="m-edit"
-        />
+          <IntroVariantsField
+            rows={variantRows}
+            onChange={setVariantRows}
+            idPrefix="m-edit"
+          />
+        </DialogBody>
 
         <DialogFooter showCloseButton>
           <Button onClick={handleSave} disabled={!canSave}>
