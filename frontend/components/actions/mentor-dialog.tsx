@@ -29,6 +29,10 @@ import { addMentor, queueAction } from "@/lib/api"
 import { authorizeSend } from "@/lib/authorize-send"
 import type { GroupCase, Mentor } from "@/lib/types"
 
+/**
+ * The default `intro`, as a pickable option. Not sent to the server — it means
+ * "no variant", which is what makes the backend use the default wording.
+ */
 const DEFAULT_VARIANT = "__default__"
 
 export function MentorDialog({
@@ -45,27 +49,36 @@ export function MentorDialog({
   onDone?: () => void
 }) {
   const [mentorName, setMentorName] = React.useState<string | null>(null)
-  const [variant, setVariant] = React.useState<string>(DEFAULT_VARIANT)
+  /**
+   * Null means "not chosen yet". A mentor with more than one introduction has
+   * to be given an explicit choice -- preselecting the default is how somebody
+   * sends the general wording to a family who should have had the
+   * subject-specific one, without ever noticing it existed.
+   */
+  const [variant, setVariant] = React.useState<string | null>(null)
   const [pending, setPending] = React.useState(false)
 
   React.useEffect(() => {
     if (open) {
       setMentorName(null)
-      setVariant(DEFAULT_VARIANT)
+      setVariant(null)
     }
   }, [open])
 
   const mentor = mentors.find((m) => m.name === mentorName) ?? null
   const variantKeys = mentor?.variants ? Object.keys(mentor.variants) : []
+  /** With only the default wording there is nothing to choose between. */
+  const mustChoose = variantKeys.length > 0
+  const chosen = mustChoose ? variant : DEFAULT_VARIANT
 
   React.useEffect(() => {
-    setVariant(DEFAULT_VARIANT)
+    setVariant(null)
   }, [mentorName])
 
   const message =
-    mentor
-      ? variant !== DEFAULT_VARIANT && mentor.variants?.[variant]
-        ? mentor.variants[variant]
+    mentor && chosen
+      ? chosen !== DEFAULT_VARIANT && mentor.variants?.[chosen]
+        ? mentor.variants[chosen]
         : mentor.intro
       : ""
 
@@ -76,14 +89,14 @@ export function MentorDialog({
   const queueing = groupCase.stage === "AWAITING_JOIN"
 
   async function handleSend() {
-    if (!mentor) return
+    if (!mentor || !chosen) return
     setPending(true)
     try {
       if (queueing) {
         await queueAction(groupCase.id, {
           kind: "ADD_MENTOR",
           mentor: mentor.name,
-          ...(variant !== DEFAULT_VARIANT ? { variant } : {}),
+          ...(chosen !== DEFAULT_VARIANT ? { variant: chosen } : {}),
         })
         toast.success("Mentor introduction queued", {
           description: `${mentor.name} will be introduced once the family joins ${groupCase.group_name}.`,
@@ -97,7 +110,7 @@ export function MentorDialog({
       const result = await addMentor(
         groupCase.id,
         mentor.name,
-        variant !== DEFAULT_VARIANT ? variant : undefined,
+        chosen !== DEFAULT_VARIANT ? chosen : undefined,
         actor,
       )
 
@@ -162,11 +175,14 @@ export function MentorDialog({
           </Select>
         </Field>
 
-        {variantKeys.length > 0 ? (
+        {mustChoose ? (
           <Field>
-            <FieldLabel>Introduction variant</FieldLabel>
+            <FieldLabel>
+              Which introduction?{" "}
+              <span className="font-normal text-muted-foreground">(required)</span>
+            </FieldLabel>
             <ToggleGroup
-              value={[variant]}
+              value={variant ? [variant] : []}
               onValueChange={(value) => {
                 const next = value[0]
                 if (next) setVariant(next)
@@ -183,24 +199,28 @@ export function MentorDialog({
               ))}
             </ToggleGroup>
             <FieldDescription>
-              Subject-specific intros are tailored to the group&apos;s project area.
+              {mentor?.name} has {variantKeys.length + 1} introductions. Pick the
+              one that fits this group&apos;s project — nothing is preselected,
+              so the general wording can&apos;t go out by accident.
             </FieldDescription>
           </Field>
         ) : null}
 
         <div className="flex flex-col gap-2">
           <span className="text-xs font-medium text-muted-foreground">Message preview</span>
-          {mentor ? (
+          {mentor && chosen ? (
             <WhatsappPreview message={message} groupName={groupCase.group_name} />
           ) : (
             <div className="flex items-center justify-center rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
-              Select a mentor to preview the introduction.
+              {mentor
+                ? "Pick an introduction to preview it."
+                : "Select a mentor to preview the introduction."}
             </div>
           )}
         </div>
 
         <DialogFooter showCloseButton>
-          <Button onClick={handleSend} disabled={pending || !mentor}>
+          <Button onClick={handleSend} disabled={pending || !mentor || !chosen}>
             {pending ? <Spinner data-icon="inline-start" /> : <SendIcon data-icon="inline-start" />}
             {queueing ? "Add to queue" : "Send introduction"}
           </Button>

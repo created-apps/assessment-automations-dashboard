@@ -17,6 +17,11 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field"
 import { Spinner } from "@/components/ui/spinner"
+import {
+  IntroVariantsField,
+  variantsFromRows,
+  type VariantRow,
+} from "@/components/mentors/intro-variants-field"
 import { createMentor } from "@/lib/api"
 
 export function AddMentorDialog({
@@ -32,6 +37,7 @@ export function AddMentorDialog({
   const [intro, setIntro] = React.useState("")
   const [email, setEmail] = React.useState("")
   const [phone, setPhone] = React.useState("")
+  const [variantRows, setVariantRows] = React.useState<VariantRow[]>([])
   const [pending, setPending] = React.useState(false)
 
   React.useEffect(() => {
@@ -40,8 +46,11 @@ export function AddMentorDialog({
       setIntro("")
       setEmail("")
       setPhone("")
+      setVariantRows([])
     }
   }, [open])
+
+  const extra = variantsFromRows(variantRows)
 
   // Phone is required: it is what the mentor's SYNC account is keyed on, and
   // where their group invite link is sent. Without it they can be introduced
@@ -50,10 +59,11 @@ export function AddMentorDialog({
     name.trim().length > 0 &&
     intro.trim().length > 0 &&
     phone.trim().length > 0 &&
+    extra.error === null &&
     !pending
 
   async function handleSave() {
-    if (!name.trim() || !intro.trim() || !phone.trim()) return
+    if (!name.trim() || !intro.trim() || !phone.trim() || extra.error) return
     setPending(true)
     try {
       await createMentor({
@@ -61,6 +71,7 @@ export function AddMentorDialog({
         intro: intro.trim(),
         email: email.trim() || undefined,
         phone: phone.trim(),
+        ...(extra.variants ? { variants: extra.variants } : {}),
       })
       toast.success("Mentor added", {
         description: `${name.trim()} is now in the directory.`,
@@ -110,8 +121,17 @@ export function AddMentorDialog({
             placeholder="I would like to introduce you to your research mentor..."
             rows={6}
           />
-          <FieldDescription>Sent as-is into the WhatsApp group.</FieldDescription>
+          <FieldDescription>
+            Sent as-is into the WhatsApp group. This is the default — add named
+            alternatives below if this mentor needs more than one.
+          </FieldDescription>
         </Field>
+
+        <IntroVariantsField
+          rows={variantRows}
+          onChange={setVariantRows}
+          idPrefix="m-add"
+        />
 
         <div className="grid gap-4 sm:grid-cols-2">
           <Field>

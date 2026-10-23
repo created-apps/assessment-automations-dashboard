@@ -13,15 +13,28 @@ const bodySchema = z
     // Nullable so a wrong address can be removed, not only replaced.
     email: z.string().trim().email().max(320).nullable().optional(),
     phone: z.string().trim().min(3).max(40).nullable().optional(),
+    /**
+     * The whole set of named introductions, replaced. Null removes them all,
+     * which is how the last one is deleted. Shape only — the backend owns the
+     * reserved labels and the cap.
+     */
+    variants: z
+      .record(z.string().trim().min(1).max(60), z.string().trim().min(1).max(8000))
+      .nullable()
+      .optional(),
   })
   .refine(
     (b) =>
-      b.intro !== undefined || b.email !== undefined || b.phone !== undefined,
+      b.intro !== undefined ||
+      b.email !== undefined ||
+      b.phone !== undefined ||
+      b.variants !== undefined,
     { message: "Nothing to change." },
   )
 
 /**
- * Edit a mentor's introduction, email or phone. Admin-only, like adding one —
+ * Edit a mentor's introduction, email, phone or named introductions.
+ * Admin-only, like adding one —
  * it changes what the whole team sends, and the email decides which mentor an
  * intake sheet row resolves to. The editor is taken from the session for the
  * audit trail on mentors that gain their first row through this edit.

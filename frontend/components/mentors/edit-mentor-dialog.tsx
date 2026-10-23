@@ -17,6 +17,12 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field"
 import { Spinner } from "@/components/ui/spinner"
+import {
+  IntroVariantsField,
+  rowsFromVariants,
+  variantsFromRows,
+  type VariantRow,
+} from "@/components/mentors/intro-variants-field"
 import { updateMentor, type MentorEdit } from "@/lib/api"
 import type { Mentor } from "@/lib/types"
 
@@ -39,6 +45,7 @@ export function EditMentorDialog({
   const [intro, setIntro] = React.useState("")
   const [email, setEmail] = React.useState("")
   const [phone, setPhone] = React.useState("")
+  const [variantRows, setVariantRows] = React.useState<VariantRow[]>([])
   const [pending, setPending] = React.useState(false)
 
   React.useEffect(() => {
@@ -46,11 +53,13 @@ export function EditMentorDialog({
     setIntro(mentor.intro)
     setEmail(mentor.email ?? "")
     setPhone(mentor.phone ?? "")
+    setVariantRows(rowsFromVariants(mentor.variants))
   }, [mentor])
 
   const trimmedIntro = intro.trim()
   const trimmedEmail = email.trim()
   const trimmedPhone = phone.trim()
+  const extra = variantsFromRows(variantRows)
 
   /** Only what actually changed. Empty clears the field rather than skipping it. */
   const changes: MentorEdit = React.useMemo(() => {
@@ -65,11 +74,29 @@ export function EditMentorDialog({
     if (trimmedPhone !== (mentor.phone ?? "").trim()) {
       out.phone = trimmedPhone || null
     }
+    // Compared as JSON of a sorted key list: the rows carry generated ids and
+    // an order that mean nothing on the wire, so only the labels and wording
+    // decide whether this counts as a change. Removing every row sends null,
+    // which is what deletes the last named introduction.
+    if (!extra.error) {
+      const before = mentor.variants ?? null
+      const asKey = (v: Record<string, string> | null) =>
+        v === null || Object.keys(v).length === 0
+          ? "null"
+          : JSON.stringify(Object.entries(v).sort(([a], [b]) => a.localeCompare(b)))
+      if (asKey(extra.variants) !== asKey(before)) {
+        out.variants = extra.variants
+      }
+    }
     return out
-  }, [mentor, trimmedIntro, trimmedEmail, trimmedPhone])
+  }, [mentor, trimmedIntro, trimmedEmail, trimmedPhone, extra.error, extra.variants])
 
   const canSave =
-    Boolean(mentor) && Object.keys(changes).length > 0 && !pending && Boolean(trimmedIntro)
+    Boolean(mentor) &&
+    Object.keys(changes).length > 0 &&
+    extra.error === null &&
+    !pending &&
+    Boolean(trimmedIntro)
 
   async function handleSave() {
     if (!mentor || Object.keys(changes).length === 0) return
@@ -140,8 +167,17 @@ export function EditMentorDialog({
             onChange={(e) => setIntro(e.target.value)}
             rows={8}
           />
-          <FieldDescription>Sent as-is into the WhatsApp group.</FieldDescription>
+          <FieldDescription>
+            Sent as-is into the WhatsApp group, unless a named alternative
+            below is picked instead.
+          </FieldDescription>
         </Field>
+
+        <IntroVariantsField
+          rows={variantRows}
+          onChange={setVariantRows}
+          idPrefix="m-edit"
+        />
 
         <DialogFooter showCloseButton>
           <Button onClick={handleSave} disabled={!canSave}>

@@ -189,6 +189,61 @@ api.get('/mentors', (_req, res) => {
   );
 });
 
+/**
+ * A mentor's named introductions: label -> the wording that goes out.
+ *
+ * Labels are lowercased on the way in. They are the key `introFor` resolves a
+ * queued action against, so two labels differing only in case would be two
+ * rows that mean the same thing -- and whichever Postgres returned first would
+ * silently win. "general" is reserved: the dashboard uses it as the name for
+ * the default `intro`, so a named introduction called that would show up twice
+ * in the picker meaning two different things.
+ */
+const RESERVED_VARIANT_LABELS = ['general', 'default'];
+
+const variantsSchema = z
+  .record(z.string().trim().min(1).max(60), z.string().trim().min(1).max(8000))
+  /*
+   * Validated BEFORE the lowercasing below, which is the only order that
+   * works: "Chemistry" and "chemistry" are two distinct keys in the request
+   * and one key afterwards, so a check that ran on the transformed object
+   * would see nothing wrong while one of the two wordings had already been
+   * dropped on the floor.
+   */
+  .superRefine((v, ctx) => {
+    const keys = Object.keys(v);
+
+    if (keys.length > 12) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'at most 12 named introductions per mentor',
+      });
+    }
+
+    const seen = new Set<string>();
+    for (const key of keys) {
+      const label = key.trim().toLowerCase();
+      if (RESERVED_VARIANT_LABELS.includes(label)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `"${label}" is reserved -- it is what the default introduction is called`,
+        });
+      }
+      if (seen.has(label)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `two introductions are both named "${label}"`,
+        });
+      }
+      seen.add(label);
+    }
+  })
+  .transform((v) =>
+    Object.fromEntries(
+      Object.entries(v).map(([key, text]) => [key.trim().toLowerCase(), text])
+    )
+  );
+
 const newMentorSchema = z.object({
   name: z.string().trim().min(1).max(200),
   intro: z.string().trim().min(1).max(8000),
@@ -197,7 +252,7 @@ const newMentorSchema = z.object({
   // an account is keyed on, and it is also the number the group invite is DM'd
   // to. A mentor without one can be introduced but never linked to anything.
   phone: z.string().trim().min(3).max(40),
-  variants: z.record(z.string(), z.string()).optional(),
+  variants: variantsSchema.optional(),
   actor: z.string().trim().min(1).optional(),
 });
 
@@ -264,11 +319,20 @@ const mentorEditSchema = z
      */
     email: z.string().trim().email().max(320).nullable().optional(),
     phone: z.string().trim().min(3).max(40).nullable().optional(),
+    /**
+     * The whole set, replaced. Null clears them, leaving the default `intro`
+     * as the only wording -- which is how a named introduction is deleted.
+     */
+    variants: variantsSchema.nullable().optional(),
     actor: z.string().trim().min(1).optional(),
   })
   .refine(
-    (b) => b.intro !== undefined || b.email !== undefined || b.phone !== undefined,
-    'give at least one of intro, email or phone'
+    (b) =>
+      b.intro !== undefined ||
+      b.email !== undefined ||
+      b.phone !== undefined ||
+      b.variants !== undefined,
+    'give at least one of intro, email, phone or variants'
   );
 
 /**
@@ -305,7 +369,7 @@ api.patch('/mentors/:name', async (req, res) => {
     return res.status(404).json({ error: `No mentor named "${req.params.name}".` });
   }
 
-  const { intro, email, phone, actor } = parsed.data;
+  const { intro, email, phone, variants, actor } = parsed.data;
 
   // Two mentors sharing an address is worse than it sounds: findMentorByEmail
   // treats a duplicate as no match rather than picking between them, so this
@@ -336,7 +400,9 @@ api.patch('/mentors/:name', async (req, res) => {
       mentor = await db.insertMentor({
         name: current.name,
         intro: intro ?? current.intro,
-        variants: current.variants ?? null,
+        // The edit wins over what the seed holds, so a seed mentor's named
+        // introductions can be changed on the same edit that creates their row.
+        variants: variants !== undefined ? variants : current.variants ?? null,
         email: email !== undefined ? email : current.email ?? null,
         phone: phone !== undefined ? phone : current.phone ?? null,
         createdBy: actor ?? null,
@@ -344,6 +410,9 @@ api.patch('/mentors/:name', async (req, res) => {
     } else {
       if (intro !== undefined) {
         mentor = await db.updateMentorIntro(mentor.id, intro);
+      }
+      if (variants !== undefined) {
+        mentor = await db.updateMentorVariants(mentor.id, variants);
       }
       if (email !== undefined || phone !== undefined) {
         mentor = await db.updateMentorContact(mentor.id, {

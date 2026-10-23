@@ -104,6 +104,8 @@ export function createMentor(body: {
   intro: string
   email?: string
   phone?: string
+  /** Named alternative introductions: label -> wording. */
+  variants?: Record<string, string>
 }): Promise<Mentor> {
   return request<Mentor>("/api/mentors", {
     method: "POST",
@@ -116,11 +118,16 @@ export interface MentorEdit {
   /** null clears the address; omitted leaves it alone. */
   email?: string | null
   phone?: string | null
+  /**
+   * The whole set of named introductions, replaced. null removes them all,
+   * leaving the default `intro`; omitted leaves them alone.
+   */
+  variants?: Record<string, string> | null
 }
 
 /**
- * Change a mentor's introduction, email or phone. Admin-only (enforced
- * server-side). Send only the fields being changed.
+ * Change a mentor's introduction, email, phone or named introductions.
+ * Admin-only (enforced server-side). Send only the fields being changed.
  */
 export function updateMentor(name: string, body: MentorEdit): Promise<Mentor> {
   return request<Mentor>(`/api/mentors/${encodeURIComponent(name)}`, {

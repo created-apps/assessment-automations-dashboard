@@ -1205,6 +1205,26 @@ export async function updateMentorIntro(id: string, intro: string): Promise<DbMe
 }
 
 /**
+ * Replace a mentor's named introductions.
+ *
+ * Whole-map replacement, not a merge: the dashboard edits them as one list, so
+ * a removed name has to disappear, and a merge would make removal impossible.
+ * Null clears them, leaving only the default `intro`.
+ */
+export async function updateMentorVariants(
+  id: string,
+  variants: Record<string, string> | null
+): Promise<DbMentor> {
+  const rows = await call<DbMentorRow[]>('PATCH', `/mentors?id=eq.${encodeURIComponent(id)}`, {
+    body: { variants, updated_at: new Date().toISOString() },
+    prefer: 'return=representation',
+  });
+  const row = rows[0];
+  if (!row) throw new DbError('mentors variants update returned no row', 500, rows);
+  return toMentor(row);
+}
+
+/**
  * Fill in a mentor's contact details from SYNC.
  *
  * Only the fields given are written, and each is left alone when it is already

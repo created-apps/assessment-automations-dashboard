@@ -172,16 +172,28 @@ export function findMentorFuzzy(query: string): MentorMatch {
 /**
  * The introduction to send.
  *
- * `variant` is matched loosely against the variant keys so "chemistry project"
- * still selects the chemistry wording; anything unrecognised falls back to the
- * default introduction rather than failing.
+ * An exact key is tried first, then the loose "contains" match that free text
+ * needs -- "chemistry project" still selects the chemistry wording. Exact has
+ * to come first now that the keys are authored in the dashboard rather than
+ * written here: with keys like "bio" and "biology", a contains-only match
+ * resolves "biology" to whichever key was inserted first, so asking for one
+ * named introduction by name could hand back another's text.
+ *
+ * Anything unrecognised falls back to the default introduction rather than
+ * failing -- a queued action can name a variant that has since been renamed,
+ * and sending the general wording beats sending nothing.
  */
 export function introFor(mentor: Mentor, variant?: string): string {
   if (!variant || !mentor.variants) return mentor.intro;
 
-  const wanted = variant.toLowerCase();
-  for (const [key, text] of Object.entries(mentor.variants)) {
-    if (wanted.includes(key)) return text;
+  const wanted = variant.trim().toLowerCase();
+  const entries = Object.entries(mentor.variants);
+
+  const exact = entries.find(([key]) => key.trim().toLowerCase() === wanted);
+  if (exact) return exact[1];
+
+  for (const [key, text] of entries) {
+    if (wanted.includes(key.trim().toLowerCase())) return text;
   }
   return mentor.intro;
 }

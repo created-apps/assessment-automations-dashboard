@@ -112,6 +112,8 @@ export interface NewMentorBody {
   email?: string
   /** Required: keys the mentor's SYNC account and receives their group invite. */
   phone: string
+  /** Named alternative introductions: label -> wording. */
+  variants?: Record<string, string>
   actor?: string
 }
 
@@ -124,12 +126,14 @@ export interface MentorEditBody {
   /** null clears the address; omitted leaves it alone. */
   email?: string | null
   phone?: string | null
+  /** The whole set, replaced. null removes them all; omitted leaves them. */
+  variants?: Record<string, string> | null
   actor?: string
 }
 
 /**
- * Change a mentor's introduction, email or phone. The name identifies them and
- * is not editable.
+ * Change a mentor's introduction, email, phone or named introductions. The
+ * name identifies them and is not editable.
  *
  * The email is what the intake sheet matches a group's mentor on, exactly, so
  * this is the only way a mentor becomes nameable from the sheet.

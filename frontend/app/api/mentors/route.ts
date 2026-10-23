@@ -19,6 +19,15 @@ export async function GET() {
   }
 }
 
+/**
+ * Named alternative introductions. Shape only — the backend owns the rules
+ * (reserved labels, the per-mentor cap, lowercasing) and reports them.
+ */
+const variantsSchema = z.record(
+  z.string().trim().min(1).max(60),
+  z.string().trim().min(1).max(8000),
+)
+
 const bodySchema = z.object({
   name: z.string().trim().min(1).max(200),
   intro: z.string().trim().min(1).max(8000),
@@ -26,6 +35,7 @@ const bodySchema = z.object({
   // Required: the mentor's SYNC account is keyed on this number, and it is
   // also where their group invite is sent.
   phone: z.string().trim().min(3).max(40),
+  variants: variantsSchema.optional(),
 })
 
 /**
